@@ -1,0 +1,71 @@
+{{ if eq .chezmoi.os "windows" }}
+
+# zsh — you don't run it here
+.zsh/
+.zshrc
+.config/zsh
+.config/zsh_autosuggestions
+.config/zsh_completions
+.config/zsh_plugins
+
+# Atuin (doesn't work reliably)
+.config/atuin
+
+# Tmux (you don’t use this on native Windows)
+.config/tmux/
+.tmux.conf
+
+# Systemd
+.config/systemd/
+
+# Linux/macOS-specific bootstrap
+.config/bootstrap-local/literal_run_once_linux_install.sh
+.config/bootstrap-local/literal_run_once_darwin_install.sh
+
+# WSL/macOS-specific WezTerm config
+.config/wezterm/wezterm-osx.lua
+.config/wezterm/wezterm-wsl.lua
+
+# SSH
+.ssh/
+
+{{ else }}
+
+# Zsh ignores
+.zsh/plugins
+.zsh_history
+.zcompdump
+
+# Ignore bash history
+.bash_history
+
+# Chezmoi - can't be added anyhow
+.config/chezmoi
+
+# Neovim
+.config/nvim/lazy-lock.json
+.config/nvim/foo
+.config/nvim-dev
+.config/nvim-kickstart
+.config/nvim-kickstart-modular
+.config/nvim-lazyvim
+
+# ~/.config misc
+.config/go
+
+# SSH
+.ssh/id_*
+.ssh/known_hosts
+.ssh/authorized_keys
+
+# Ignore Neovim swap/undo files
+*.swp
+*.swo
+*.un~
+
+# Ignore GPG keyring
+.gnupg/
+
+# Ignore local machine configs
+.zshrc.local
+{{ end }}

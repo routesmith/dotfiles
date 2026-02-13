@@ -1,0 +1,4 @@
+# Takes any arguments, feeds them to find, and opens them in $EDITOR for batch editing.
+function files() {
+  find "$@" | xargs -o $EDITOR
+}

@@ -1,0 +1,72 @@
+# This is a templated external config.
+# DO NOT `chezmoi add` this – it already lives in the source dir.
+
+# Neovim repo to pull down every so often.
+[".config/nvim"]
+type = "git-repo"
+url = "git@github.com:{{ .github_username }}/nvim.git"
+pullArgs = [ "--ff-only" ] # Recommended for clean pulls.
+refreshInterval = "2h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# Only grab the ZSH and tmux plugins if not on Windows
+{{ if ne .chezmoi.os "windows" }}
+
+# ZSH Plugins
+#
+# zsh-async plugin
+[".zsh/plugins/zsh-async"]
+type = "archive"
+url = "https://github.com/mafredri/zsh-async/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# zsh-autocomplete plugin
+[".zsh/plugins/zsh-autocomplete"]
+type = "archive"
+url = "https://github.com/marlonrichert/zsh-autocomplete/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# zsh-autosuggestions plugin
+[".zsh/plugins/zsh-autosuggestions"]
+type = "archive"
+url = "https://github.com/zsh-users/zsh-autosuggestions/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# zsh-completions plugin
+[".zsh/plugins/zsh-completions"]
+type = "archive"
+url = "https://github.com/zsh-users/zsh-completions/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# zsh-history-substring-search plugin
+[".zsh/plugins/zsh-history-substring-search"]
+type = "archive"
+url = "https://github.com/zsh-users/zsh-history-substring-search/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# zsh-syntax-highlighting plugin
+[".zsh/plugins/zsh-syntax-highlighting"]
+type = "archive"
+url = "https://github.com/zsh-users/zsh-syntax-highlighting/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+# tmux plugin manager (tpm)
+[".config/tmux/plugins/tpm"]
+type = "archive"
+url = "https://github.com/tmux-plugins/tpm/archive/master.tar.gz"
+exact = true
+stripComponents = 1
+refreshInterval = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
+
+{{ end }}

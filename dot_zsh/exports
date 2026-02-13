@@ -1,0 +1,182 @@
+#!/usr/bin/env zsh
+# Run a slow-running command in the background to compute a value and `export`
+# it.
+#
+# Usage:
+#
+#     async_export NAME '$(expensive command to eval)'
+#
+# Example:
+#
+#     async_export GITLAB_TOKEN '$(security find-generic-password -a ${USER} -s gitlab_token -w)'
+#
+async_export() {
+  local NAME="$1"
+  local VALUE="$2"
+  local ID="${RANDOM}"
+  local WORKER="async_worker_${ID}"
+  local CALLBACK="async_worker_callback_${ID}"
+
+  if [ -f "$HOME/.zsh/zsh-async/async.zsh" ]; then
+    eval "
+      $CALLBACK() {
+        local STATUS=\$2
+        local RESULT=\$3
+        if [ \$STATUS = 0 ]; then
+          export $NAME=\"\$RESULT\"
+        fi
+        async_stop_worker $WORKER
+        unset -f $CALLBACK
+      }
+    "
+
+    async_start_worker $WORKER
+    async_register_callback $WORKER $CALLBACK
+    async_job $WORKER eval "print $VALUE"
+  else
+    eval "export $NAME=$VALUE"
+  fi
+}
+
+# Stop (eg.) `git push github` from triggering:
+# zsh: correct 'github' to '.github' [yes, no, edit, abort]?
+export CORRECT_IGNORE_FILE='.*'
+
+export PAGER=less
+
+# Ensure EDITOR is nvim, if installed, or vim if not installed.
+if builtin command -v nvim &> /dev/null; then
+  export EDITOR=$(builtin command -v nvim)
+else
+  export EDITOR=vim
+fi
+
+# filename (if known), line number if known, falling back to percent if known,
+# falling back to byte offset, falling back to dash
+export LESSPROMPT='?f%f .?ltLine %lt:?pt%pt\%:?btByte %bt:-...'
+
+# i = case-insensitive searches, unless uppercase characters in search string
+# F = exit immediately if output fits on one screen
+# M = verbose prompt
+# R = ANSI color support
+# X = suppress alternate screen
+# -#.25 = scroll horizontally by quarter of screen width (default is half)
+export LESS="-iFMRX -#.25"
+
+# Color man pages.
+export LESS_TERMCAP_mb=$'\E[01;31m'
+export LESS_TERMCAP_md=$'\E[01;38;5;208m'
+export LESS_TERMCAP_me=$'\E[0m'
+export LESS_TERMCAP_se=$'\E[0m'
+export LESS_TERMCAP_ue=$'\E[0m'
+export LESS_TERMCAP_us=$'\E[04;38;5;111m'
+
+function () {
+  # See: `man ls`
+  local BLACK=a
+  local RED=b
+  local GREEN=c
+  local BROWN=d
+  local BLUE=e
+  local MAGENTA=f
+  local CYAN=g
+  local LIGHT_GRAY=h
+  local BOLD_BLACK=A # dark gray
+  local BOLD_RED=B
+  local BOLD_BROWN=D # yellow
+  local BOLD_BLUE=E
+  local BOLD_MAGENTA=F
+  local BOLD_CYAN=G
+  local BOLD_LIGHT_GRAY=H # bright white
+  local DEFAULT=x
+
+  # Default is (11 pairs of fg/bg):
+  #
+  #   exfxcxdxbxegedabagacad
+  #   ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
+  #   | | | | | | | | | | \
+  #   | | | | | | | | | \  - directory (writable, no sticky): black, brown
+  #   | | | | | | | | \  --- directory (writable, sticky bit): black, green
+  #   | | | | | | | \  ----- executable (setuid): black, cyan
+  #   | | | | | | \  ------- executable (setguid): black, red
+  #   | | | | | \  --------- character special: blue, brown
+  #   | | | | \  ----------- block special: blue, cyan
+  #   | | | \  ------------- executable: red, default
+  #   | | \  --------------- pipe: brown, defaut
+  #   | \  ----------------- socket: green, default
+  #   \  ------------------- symbolic link: magenta, default
+  #    --------------------- directory: blue, default
+  #
+
+  local DIRECTORY="${BOLD_LIGHT_GRAY}${DEFAULT}"
+  local SYMBOLIC_LINK="${MAGENTA}${DEFAULT}"
+  local SOCKET="${GREEN}${DEFAULT}"
+  local PIPE="${BROWN}${DEFAULT}"
+  local EXECUTABLE="${BOLD_RED}${DEFAULT}"
+  local BLOCK_SPECIAL="${BLUE}${CYAN}"
+  local CHARACTER_SPECIAL="${BLUE}${BROWN}"
+  local EXECUTABLE_SETGUID="${BLACK}${RED}"
+  local EXECUTABLE_SETUID="${BLACK}${CYAN}"
+  local DIRECTORY_STICKY="${BLACK}${GREEN}"
+  local DIRECTORY_NO_STICKY="${BLACK}${BROWN}"
+
+  LSCOLORS=$DIRECTORY
+  LSCOLORS+=$SYMBOLIC_LINK
+  LSCOLORS+=$SOCKET
+  LSCOLORS+=$PIPE
+  LSCOLORS+=$EXECUTABLE
+  LSCOLORS+=$BLOCK_SPECIAL
+  LSCOLORS+=$CHARACTER_SPECIAL
+  LSCOLORS+=$EXECUTABLE_SETGUID
+  LSCOLORS+=$EXECUTABLE_SETUID
+  LSCOLORS+=$DIRECTORY_STICKY
+  LSCOLORS+=$DIRECTORY_NO_STICKY
+
+  export LSCOLORS
+}
+
+
+# SSH authentication
+export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+#
+# for the benefit of CPAN and potentially others
+export FTP_PASSIVE=1
+
+# colour ls listings
+export CLICOLOR=true
+
+if [ -n "$TTY" ]; then
+  export GPG_TTY=$TTY
+else
+  export GPG_TTY=$(tty)
+fi
+
+#export GOPATH=~/code/go
+
+# See: https://docs.brew.sh/Analytics
+export HOMEBREW_NO_ANALYTICS=1
+
+if [ -d /opt/homebrew ]; then
+  export HOMEBREW_PREFIX="/opt/homebrew"
+  export HOMEBREW_CELLAR="/opt/homebrew/Cellar"
+  export HOMEBREW_NO_AUTO_UPDATE=1
+  export HOMEBREW_REPOSITORY="/opt/homebrew"
+fi
+
+#export RIPGREP_CONFIG_PATH=$HOME/.rgrc
+
+# Shellbot.
+# For now, requires a manual `cargo build --release`.
+#export SHELLBOT="$HOME/.config/nvim/pack/bundle/opt/shellbot/target/release/shellbot $HOME/.config/shellbot/prompt"
+#export ANTHROPIC_MODEL=claude-sonnet-4-20250514
+#export OPENAI_MODEL=gpt-4.1
+
+# () {
+#   local PRIVATE="$HOME/.zsh/exports.private"
+#   if grep 'com\.wincent\.git-cipher' "$PRIVATE" &> /dev/null; then
+#     # Don't source still-encrypted file.
+#   else
+#     # Source it if it's actually there.
+#     test -e "$PRIVATE" && source "$PRIVATE"
+#   fi
+# }

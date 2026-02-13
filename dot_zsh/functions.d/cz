@@ -1,0 +1,54 @@
+# ~/.zsh/functions.d/cz
+#
+# chezmoi zsh helper for interactive dotfile management
+cz() {
+    local cmd file
+
+    case "$1" in
+    ea)
+        file=$(chezmoi managed | fzf --prompt="Edit dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi edit --apply ~/"$file"
+        ;;
+    ew)
+        file=$(chezmoi managed | fzf --prompt="Edit dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi edit --watch ~/"$file"
+        ;;
+    edit)
+        file=$(chezmoi managed | fzf --prompt="Edit dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi edit ~/"$file"
+        ;;
+
+    apply)
+        file=$(chezmoi managed | fzf --prompt="Apply dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi apply ~/"$file"
+        ;;
+
+    diff)
+        file=$(chezmoi managed | fzf --prompt="Diff dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi diff ~/"$file"
+        ;;
+
+    forget)
+        file=$(chezmoi managed | fzf --prompt="Forget dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi forget ~/"$file"
+        ;;
+
+    add)
+        file=$(fd . ~ --type f --strip-cwd-prefix | grep -vFf <(chezmoi managed) | fzf --prompt="Add dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi add ~/"$file"
+        ;;
+
+    ra)
+        file=$(chezmoi managed | fzf --prompt="Re-add dotfile: " --height=40%) || return
+        [[ -n $file ]] && chezmoi re-add ~/"$file"
+        ;;
+
+    managed)
+        chezmoi managed | fzf --preview "chezmoi diff ~/{}" --prompt="Browse managed files: "
+        ;;
+
+    *)
+        echo "Usage: cz {ea|ew|edit|apply|diff|forget|add|ra|managed}"
+        ;;
+    esac
+}

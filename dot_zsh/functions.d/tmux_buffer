@@ -1,0 +1,36 @@
+# ~/.zsh/functions.d/tmux_buffer
+#
+# Define only if tmux is installed and a session is running
+if command -v tmux >/dev/null 2>&1 && tmux info &>/dev/null; then
+
+    # Copy stdin to tmux buffer
+    tb() {
+        tmux load-buffer -
+    }
+
+    # Alias
+    TB() {
+        tb "$@"
+    }
+
+    # Paste from tmux buffer
+    tp() {
+        tmux show-buffer
+    }
+
+    # Alias
+    TP() {
+        tp "$@"
+    }
+
+    # Load file into tmux buffer
+    tbf() {
+        if [[ ! -f $1 ]]; then
+            echo "tbf: file not found: $1" >&2
+            return 1
+        fi
+        tmux load-buffer "$1"
+        echo "Loaded into tmux buffer: $1"
+    }
+
+fi

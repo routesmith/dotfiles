@@ -1,0 +1,24 @@
+# ~/.zsh/functions.d/fzf_cd_zoxide
+#
+# ALT-C directory navigation using zoxide + fzf + preview
+
+fzf_cd_zoxide() {
+    local dir
+    dir=$(fd --type d --hidden --follow --exclude .git |
+        fzf --height=60% --layout=reverse \
+            --preview '
+    if [ -d {} ]; then
+        ls -la --color=always {} 2>/dev/null
+    elif [ -f {} ]; then
+        bat --color=always --style=numbers --line-range=:500 {} 2>/dev/null
+    else
+        echo "Cannot preview: {}"
+    fi
+    ' \
+            --preview-window=right:50%:wrap) || return
+
+    if [[ -n $dir ]]; then
+        zoxide add "$dir"
+        cd "$dir"
+    fi
+}

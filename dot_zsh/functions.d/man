@@ -1,0 +1,15 @@
+# ~/.zsh/functions.d/man
+#
+# Use Neovim for man page viewing if available, if not just fall back.
+# If your system's 'man' binary is in another common PATH, just update
+# it here.
+
+function man() {
+    local system_man="/usr/bin/man"
+
+    if command -v nvim > /dev/null 2>&1; then
+        MANPAGER='nvim +Man!' "$system_man" "$@"
+    else
+         MANPAGER='bat -p --paging=always' "$system_man" "$@"
+    fi
+}

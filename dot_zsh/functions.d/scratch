@@ -1,0 +1,13 @@
+# ~/.zsh/functions.d/scratch
+#
+# Creates a temporary directory, spawns a subshell inside it, and then removes
+# the directory when the subshell exits.   Perfect for quick, isolated
+# experiments or temporary file work.
+function scratch() {
+  local SCRATCH=$(mktemp -d)
+  echo 'Spawing subshell in scratch directory:'
+  echo "  $SCRATCH"
+  (cd $SCRATCH; zsh)
+  echo "Removing scratch directory"
+  rm -rf "$SCRATCH"
+}

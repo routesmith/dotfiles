@@ -1,0 +1,64 @@
+#!/usr/bin/env zsh
+#
+# Eagerly loaded functions.
+#
+
+# Bounce the Dock icon, if Kitty does not have focus.
+# Relies on `window_alert_on_bell yes` setting.
+function bounce() {
+  echo -en "\a"
+}
+
+#
+# Autoloaded functions.
+#
+
+# Anything that isn't needed for shell startup should go in ~/zsh/functions.d/
+# and be autoloaded.
+
+autoload -Uz cz
+autoload -Uz files
+autoload -Uz fzf_cd_zoxide
+autoload -Uz git
+autoload -Uz headers
+autoload -Uz history
+autoload -Uz man
+autoload -Uz regmv
+autoload -Uz scratch
+autoload -Uz serve
+autoload -Uz ssh
+autoload -Uz ssl
+autoload -Uz subtree
+autoload -Uz tick
+autoload -Uz tmux
+autoload -Uz tw
+autoload -Uz vg
+autoload -Uz vgl
+
+
+if [ -f "$HOME/.zsh/functions.d/venvctl" ]; then
+    source "$HOME/.zsh/functions.d/venvctl"
+fi
+
+if [ -f "$HOME/.zsh/functions.d/clip_and_paste" ]; then
+    source "$HOME/.zsh/functions.d/clip_and_paste"
+fi
+
+if [ -f "$HOME/.zsh/functions.d/tmux_buffer" ]; then
+    source "$HOME/.zsh/functions.d/tmux_buffer"
+fi
+
+# This function is designed to provide completion suggestions
+# for a custom directory jump command (e.g., 'j' or 'z').
+# It generates a list of "hashed" directories (directories you've cd'd into)
+# and offers their short names as completion options.
+function _jump_complete() {
+  emulate -L zsh
+
+  local COMPLETIONS
+  COMPLETIONS="$(hash -d|cut -d= -f1)"
+  reply=( "${(ps:\n:)COMPLETIONS}" )
+}
+
+# Complete filenames and `hash -d` entries.
+compctl -f -K _jump_complete jump

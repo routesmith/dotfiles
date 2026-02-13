@@ -1,0 +1,93 @@
+#!/usr/bin/env zsh
+#
+# Command aliases
+#
+
+alias c=clear
+alias cat='bat --paging=never --style=header,grid'
+alias find='fd'
+alias grep='rg'
+alias ls='ls -F --color=always'
+alias ....='cd ../..'
+alias :e=vim
+alias :qa=exit
+alias :sp='test -n "$TMUX" && tmux split-window'
+alias :vs='test -n "$TMUX" && tmux split-window -h'
+alias :wq=exit
+alias a='rg'
+alias ag='rg'
+alias b=bundle
+alias be='bundle exec'
+alias cd..='cd ..'
+alias chatgpt='nvim -c ChatGPT -c only'
+alias chatgptx='nvim -c ChatGPTX -c only'
+alias claude='nvim -c Claude -c only'
+alias opus='nvim -c Opus -c only'
+alias d='hash -d'
+alias f='fd'
+alias g=git
+alias h=history
+alias j=jump
+alias o='git log --oneline'
+alias oo='git log --oneline -10'
+alias p='git patch'
+alias json='python3 -m json.tool'
+alias tmuxstart='tmux has-session -t workflow 2>/dev/null && echo "Session exists. Run tmux-reset or kill first." || ~/.config/tmux/scripts/tmux-start.sh'
+
+if [ -n "$WSL_DISTRO_NAME" ]; then
+  # NOTE:  Set appendWindowsPath=false in the [interop] section of /etc/wsl.conf
+  # to remove performance issues with populating $PATH with all the Windows environment
+  # paths, so using any aliases will have to set the absolute path to the executable.
+  alias explorer='/mnt/c/Windows/explorer.exe'
+fi
+
+# The trailing space causes Zsh to perform alias expansion on the next word after sudo before
+# sudo executes it.
+alias sudo='sudo '
+alias t=tmux
+
+if command -v nvim &> /dev/null; then
+  alias vim=nvim # Use `\vim` or `command vim` to get the real vim.
+fi
+
+alias y=yazi
+
+# 'F': Fuzzy filter (single-selection by default).
+# Ideal for quick searches where you typically want to select one item.
+alias F='fzf --no-preview --ansi --layout=reverse'
+
+# 'FM': Fuzzy filter (multi-selection)
+# Use when you need to select multiple lines from the output
+# To select multiple items, use TAB or SHIFT-TAB.  Press ENTER to output
+# all selected.
+alias FM='fzf --no-preview --ansi --layout=reverse --multi'
+
+
+#
+# Suffix aliases
+# (eg. "foo.md" to open Markdown files in glow)
+#
+alias -s md=glow
+
+#
+# Global aliases (work at any position within the command line)
+# These are typically used *after* a pipe symbol, or as arguments.
+# Example: `some_command | J` (expands to `some_command | python3 -m json.tool`)
+
+# Mnemonic: "[D]elta"
+alias -g D="delta"
+
+# Mnemonic: "[G]rep" (using ripgrep)
+alias -g G="rg"
+
+# Mnemonic: "[H]ead"
+alias -g H="head"
+
+# Pretty-print JSON. Mnemonic: "[J]SON"
+alias -g J="python3 -m json.tool"
+
+# Mnemonic: "[L]ess"
+alias -g L="less"
+
+# Mnemonic: "[W]c"
+alias -g W="wc -l"

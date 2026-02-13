@@ -1,0 +1,80 @@
+# ~/.zsh/functions.d/vgl
+#
+# Fuzzy grep using rg + fzf, opens selected file and line in Neovim.
+# ~/.zsh/functions.d/vgl
+vgl() {
+    local selected file line
+    local pattern dir
+
+    # Parse arguments
+    if [[ $# -eq 2 ]]; then
+        pattern="$1"
+        dir="$2"
+    elif [[ $# -eq 1 ]]; then
+        if [[ -d $1 || -f $1 ]]; then
+            pattern=""
+            dir="$1"
+        else
+            pattern="$1"
+            dir="."
+        fi
+    else
+        pattern=""
+        dir="."
+    fi
+
+    # Ignore this stuff no matter what
+    local ignores=(
+        --max-filesize 200K
+        --hidden
+        --glob '!.git/*'
+        --glob '!**/.git/**'
+        --glob '!**/.gitignore'
+        --glob '!**/.venv/**'
+        --glob '!**/venv/**'
+        --glob '!**/.venvs/**'
+        --glob '!**/venvs/**'
+        --glob '!**/.rustup/**'
+        --glob '!**/.cargo/**'
+        --glob '!**/.cache/**'
+        --glob '!**/.direnv/**'
+        --glob '!**/.nvm/**'
+        --glob '!**/.npm/**'
+        --glob '!**/.go/**'
+        --glob '!**/go/pkg/**'
+        --glob '!**/neovim/**'
+        --glob '!**/.zsh/plugins/**'
+        --glob '!**/.zcompdump*'
+    )
+
+    # If in ~, use stricter ignores
+    if [[ "$dir" == "$HOME" || "$dir" == "." && "$PWD" == "$HOME" ]]; then
+        ignores+=(
+            --glob '!.zcompdump*'
+            --glob '!*.zsh_history'
+            --glob '!**/.zsh/plugins/**'
+            --glob '!*.viminfo'
+            --glob '!.fzf/*'
+            --glob '!.local/*'
+            --glob '!go/*'
+            --glob '!neovim/*'
+            --glob '!src/*'
+        )
+    fi
+
+    selected="$(
+        rg --with-filename --no-heading --line-number --color=always "$pattern" "$dir" \
+            "${ignores[@]}" 2>/dev/null |
+            fzf --ansi \
+                --delimiter : \
+                --preview 'bat --style=numbers --color=always --highlight-line {2} {1}' \
+                --preview-window=right:60%:wrap \
+                --height=60% --layout=reverse
+    )" || return
+
+    file="${selected%%:*}"
+    line="${selected#*:}"
+    line="${line%%:*}"
+
+    [[ -f "$file" && -n "$line" ]] && nvim "$file" +$line
+}

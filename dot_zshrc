@@ -1,0 +1,509 @@
+#!/usr/bin/env zsh
+# Initially derived from Greg Hurrell
+# https://github.com/wincent/wincent/blob/main/aspects/dotfiles/files/.zshrc
+#
+# Start profiling (uncomment when necessary)
+#
+# See: https://stackoverflow.com/a/4351664/2103996
+
+# Per-command profiling:
+
+# zmodload zsh/datetime
+# setopt promptsubst
+# PS4='+$EPOCHREALTIME %N:%i> '
+# exec 3>&2 2> startlog.$$
+# setopt xtrace prompt_subst
+
+# Per-function profiling:
+
+# zmodload zsh/zprof
+
+# Skip interactive config in non-interactive shells
+[[ $- != *i* ]] && return
+
+# --- Global Configuration Variables ---
+typeset -A __MY_ZSH_VARS
+__MY_ZSH_VARS[ITALIC_ON]=$'\e[3m'
+__MY_ZSH_VARS[ITALIC_OFF]=$'\e[23m'
+__MY_ZSH_VARS[ZSHRC]=$HOME/.zshrc
+__MY_ZSH_VARS[REAL_ZSHRC]=${__MY_ZSH_VARS[ZSHRC]:A}
+__MY_ZSH_VARS[DOTFILES]=${__MY_ZSH_VARS[REAL_ZSHRC]:h:h:h:h}
+
+# --- Platform-specific Tweaks ---
+if [ "$(uname)" = "Darwin" ]; then
+  # Suppress unwanted Homebrew-installed stuff.
+  if [ -e /usr/local/share/zsh/site-functions/_git ]; then
+    mv -f /usr/local/share/zsh/site-functions/{,disabled.}_git
+  fi
+
+  # Set 60 fps key repeat rate
+  # This command `dry` is likely part of the Wincent dotfiles;
+  # if not installed, this line will produce a "command not found" error.
+  if command -v dry &> /dev/null; then
+    dry set-key-repeat-rate 60
+  fi
+fi
+
+# Autoloaded functions
+
+if [ -d "$HOME/.zsh/functions.d" ]; then
+  fpath=("$HOME/.zsh/functions.d" $fpath)
+fi
+
+# Community completions from https://github.com/zsh-users/zsh-completions
+if [ -d "$HOME/.zsh/zsh-completions/src" ]; then
+  fpath=("$HOME/.zsh/zsh-completions/src" $fpath)
+fi
+
+# Local/custom completion sources:
+if [ -d "$HOME/.zsh/completions" ]; then
+  fpath=("$HOME/.zsh/completions" $fpath)
+fi
+
+
+autoload -U compinit
+compinit -u
+
+# --- Completion Zstyles (AFTER compinit) ---
+# These configure the completion system initialized by compinit.
+# Using Wincent's matcher-list for built-in substring completion.
+zstyle ':completion:*' matcher-list '' '+m:{[:lower:]}={[:upper:]}' '+m:{[:upper:]}={[:lower:]}' '+m:{_-}={-_}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
+
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+zstyle ':completion:*' menu select=1
+zstyle ':completion:*:cd:*' local-dirs true
+zstyle -e ':completion:*' special-dirs '[[ $PREFIX = (../)#(..) ]] && reply=(..)'
+
+zstyle ':completion:*:descriptions' format '%U%B--- %d ---%b%u'
+zstyle ':completion:*:messages' format '%d'
+zstyle ':completion:*:warnings' format 'No matches for: %d'
+zstyle ':completion:*:corrections' format '%B%d%b'
+zstyle ':completion:*:default' menu-select
+
+zstyle ':completion:*:processes' command 'ps -axco pid,tty,user,command'
+zstyle ':completion:*:functions' ignored-patterns '_*'
+zstyle ':completion:*:*:cd:*' tag-order 'named-directories' 'local-directories' 'directories'
+
+zstyle ':completion:*:ssh:*' tag-order hosts-host hosts-ipaddr users
+
+
+# --- Exceptions to auto-correction ---
+alias bundle='nocorrect bundle'
+alias cabal='nocorrect cabal'
+alias mkdir='nocorrect mkdir'
+alias mv='nocorrect mv'
+alias stack='nocorrect stack'
+alias sudo='nocorrect sudo'
+
+
+# --- Zsh History Configuration ---
+HISTFILE=~/.zsh_history
+HISTSIZE=9999999
+SAVEHIST=$HISTSIZE
+
+setopt APPENDHISTORY
+setopt SHAREHISTORY
+setopt INC_APPEND_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_REDUCE_BLANKS
+setopt HIST_SAVE_NO_DUPS
+setopt HIST_FIND_NO_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_VERIFY
+setopt HIST_EXPIRE_DUPS_FIRST
+setopt EXTENDED_HISTORY
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_NO_STORE
+setopt PRINT_EIGHT_BIT
+setopt NO_WARN_CREATE_GLOBAL
+
+
+# --- General Zsh Options ---
+setopt AUTO_CD
+setopt AUTO_LIST
+setopt AUTO_MENU
+setopt AUTO_PARAM_SLASH
+setopt BASH_REMATCH
+setopt EXTENDED_GLOB
+setopt GLOB_DOTS
+setopt IGNORE_EOF
+setopt INTERACTIVE_COMMENTS
+setopt LIST_PACKED
+setopt LONG_LIST_JOBS
+setopt MENU_COMPLETE
+setopt NO_BG_NICE
+setopt NO_HUP
+setopt NO_NOTIFY
+setopt NUMERIC_GLOB_SORT
+setopt PUSHD_IGNORE_DUPS
+setopt PUSHD_MINUS
+
+unsetopt CLOBBER
+unsetopt CORRECT
+unsetopt CORRECT_ALL
+unsetopt FLOW_CONTROL
+unsetopt LIST_BEEP
+unsetopt NOMATCH
+unsetopt PRINT_EXIT_VALUE
+
+# --- Plugins ---
+
+# Automatically quote or escape special characters in URLs as you type them
+autoload -U url-quote-magic
+zle -N self-insert url-quote-magic
+
+# NOTE: must come before zsh-history-substring-search & zsh-syntax-highlighting.
+autoload -U select-word-style
+select-word-style bash # only alphanumeric chars are considered WORDCHARS
+
+# zsh-autosuggestions
+if [ -f "$HOME/.zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
+    source "$HOME/.zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
+    ZSH_AUTOSUGGEST_STRATEGY=(history)
+    ZSH_AUTOSUGGEST_USE_ASYNC=true
+    ZSH_AUTOSUGGEST_MANUAL_REBIND=1
+    ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=244'
+
+    # Optional: prevent flicker/artifacts for sensitive commands
+    ZSH_AUTOSUGGEST_CLEAR_WIDGETS+=(chmod mv cp cd)
+
+fi
+
+# zsh-history-substring-search
+if [ -f "$HOME/.zsh/plugins/zsh-history-substring-search/zsh-history-substring-search.zsh" ]; then
+    source "$HOME/.zsh/plugins/zsh-history-substring-search/zsh-history-substring-search.zsh"
+    
+    # Note that this will only ensure unique history if we supply a prefix
+    # before hitting "up" (ie. we perform a "search"). HIST_FIND_NO_DUPS
+    # won't prevent dupes from appearing when just hitting "up" without a
+    # prefix (ie. that's "zle up-line-or-history" and not classified as a
+    # "search"). So, we have HIST_IGNORE_DUPS to make life bearable for that
+    # case.
+    #
+    # https://superuser.com/a/1494647/322531
+    HISTORY_SUBSTRING_SEARCH_ENSURE_UNIQUE=1
+fi
+
+# zsh-syntax-highlighting
+if [ -f "$HOME/.zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
+    source "$HOME/.zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+fi
+#
+# --- Keybinding Configuration ---
+# Prioritize Vim-mode keybindings (or -e for emacs)
+bindkey -v
+
+# Better searching in command mode
+bindkey -M vicmd "/" vi-history-search-backward
+
+# zsh-autoguggestions bindings
+bindkey '^F' forward-word
+bindkey '^L' autosuggest-accept
+bindkey '^X^T' autosuggest-toggle
+
+# zsh-history-substring-search bindings
+bindkey -M vicmd "k" history-substring-search-up
+bindkey -M vicmd "j" history-substring-search-down
+
+
+# Use "cbt" capability ("back_tab", as per `man terminfo`), if we have it:
+if tput cbt &> /dev/null; then
+  bindkey "$(tput cbt)" reverse-menu-complete # make Shift-tab go to previous completion
+fi
+
+if [[ $(uname -a) =~ "Ubuntu" ]]; then
+  bindkey "$key[Up]" history-substring-search-up
+  bindkey "$key[Down]" history-substring-search-down
+else
+  bindkey '^[[A' history-substring-search-up
+  bindkey '^[[B' history-substring-search-down
+fi
+bindkey '^P' history-substring-search-up
+bindkey '^N' history-substring-search-down
+
+autoload -U edit-command-line
+zle -N edit-command-line
+
+# Vi style
+bindkey -M vicmd v edit-command-line
+
+# Emacs style
+# bindkey '^xe' edit-command-line
+# bindkey '^x^e' edit-command-line
+
+# Non-conflicting Emacs norms ; minus ^F and any others we want to use for other things
+# Just comment out as-needed:
+bindkey '^a' beginning-of-line
+bindkey '^b' backward-char
+bindkey '^e' end-of-line
+bindkey '^h' backward-delete-char
+bindkey '^k' kill-line
+bindkey '^u' kill-whole-line
+bindkey '^w' backward-kill-word
+bindkey ' ' magic-space
+
+
+edit-last-command-output() {
+  if [[ "$TERM" =~ "tmux" ]]; then
+    tmux capture-pane -p -S - -E - -J | tac | awk '
+      found && !/❯/ { print }
+      /❯/ && !found { found=1; next }
+      /❯/ && found {exit}
+    ' | tac | nvim -
+  else
+    echo
+    print -Pn "%F{red}error: can't capture last command output outside of tmux%f"
+    zle accept-line
+  fi
+}
+
+zle -N edit-last-command-output
+bindkey '^x^o' edit-last-command-output
+
+bindkey ' ' magic-space # do history expansion on space
+
+# Replace standard history-incremental-search-{backward,forward} bindings.
+# These are the same but permit patterns (eg. a*b) to be used.
+bindkey "^r" history-incremental-pattern-search-backward
+bindkey "^s" history-incremental-pattern-search-forward
+
+# Make CTRL-Z background things and unbackground them.
+function fg-bg() {
+  if [[ $#BUFFER -eq 0 ]]; then
+    fg
+  else
+    zle push-input
+  fi
+}
+zle -N fg-bg
+bindkey '^Z' fg-bg
+
+# Mac-like wordwise movement (Opt/Super plus left/right) in Kitty.
+bindkey "^[[1;3C" forward-word # For macOS.
+bindkey "^[[1;3D" backward-word # For macOS.
+bindkey "^[[1;5C" forward-word # For Arch.
+bindkey "^[[1;5D" backward-word # For Arch.
+
+
+# zsh-async
+if [ -f "$HOME/.zsh/zsh-async/zsh-async.plugin.zsh" ]; then
+    autoload -Uz async && async
+    # Do we really need this:
+    source "$HOME/.zsh/plugins/zsh-async/zsh-async.plugin.zsh" # Some async init might be in plugin file
+fi
+
+
+# Other
+
+# Must come first!
+if [ -f "$HOME/.zsh/path" ]; then
+    source "$HOME/.zsh/path"
+fi
+if [ -f "$HOME/.zsh/aliases" ]; then
+    source "$HOME/.zsh/aliases"
+fi
+if [ -f "$HOME/.zsh/common" ]; then
+    source "$HOME/.zsh/common"
+fi
+if [ -f "$HOME/.zsh/exports" ]; then
+    source "$HOME/.zsh/exports"
+fi
+if [ -f "$HOME/.zsh/functions" ]; then
+    source "$HOME/.zsh/functions"
+fi
+#if [ -f "$HOME/.zsh/hash" ]; then
+#    source "$HOME/.zsh/hash"
+#fi
+if [ -f "$HOME/.zsh/vars" ]; then
+    source "$HOME/.zsh/vars"
+fi
+
+# Use in the future, if necessary:
+# if [ -f "$HOME/.zsh/hash.private" ]; then
+#     source "$HOME/.zsh/hash.private"
+# fi
+
+# Use in the future, if necessary
+# if [ -f "$HOME/.zsh/exports.private" ]; then
+#     source "$HOME/.zsh/exports.private"
+# fi
+
+
+# Environment Variables (Optional: Uncomment if you use these tools)
+# Node.js version manager `n`
+# export N_PREFIX="$HOME/.n"
+# export PATH="$N_PREFIX/bin:$PATH"
+
+# Node.js version manager `nvm`
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+# Volta (JavaScript Tool Manager)
+# export VOLTA_HOME="$HOME/.volta"
+# export PATH="$VOLTA_HOME/bin:$PATH"
+
+# Go Language Environment Setup
+export GOROOT="$HOME/.go/go" # Path to your Go installation
+export GOPATH="$HOME/go"     # Path where your Go projects and modules live
+export PATH="$PATH:$GOROOT/bin:$GOPATH/bin" # Add both Go's binaries and GOPATH's binaries to PATH
+
+export GIT_EDITOR="nvim" # Set a specific Git editor
+# export BROWSER="wslview" # Common for WSL2 to open in Windows browser
+
+
+# --- Zsh Hooks ---
+autoload -Uz add-zsh-hook
+
+# Set terminal tab and window title (host:directory)
+function -set-tab-and-window-title() {
+  emulate -L zsh
+  if [ -z "$SSH_TTY" ]; then
+    print -Pn '\e]2;%m:%3~ \a\e]1;%3~ \a'
+  fi
+}
+add-zsh-hook precmd -set-tab-and-window-title
+
+# `zsh-async` integration for non-blocking operations (if sourced after compinit)
+add-zsh-hook precmd bounce # This assumes 'bounce' function is defined elsewhere, or from a plugin.
+
+# Helper function: uses exa if available, otherwise falls back to ls
+#function _exa_or_ls() {
+#  emulate -L zsh
+#  if command -v exa &> /dev/null; then
+#    exa -a "$@"
+#  else
+#    ls -a "$@"
+#  fi
+#}
+
+# Automatically `ls -a` after `cd` (now using exa if available)
+#function -auto-ls-after-cd() {
+#  emulate -L zsh
+#  if [ "$ZSH_EVAL_CONTEXT" = "toplevel:shfunc" ]; then
+#    _exa_or_ls
+#  fi
+#}
+#add-zsh-hook chpwd -auto-ls-after-cd
+
+# Enable `cdr` command for navigating to recent directories
+autoload -Uz chpwd_recent_dirs cdr
+add-zsh-hook chpwd chpwd_recent_dirs
+zstyle ':completion:*:*:cdr:*:*' menu selection
+zstyle ':chpwd:*' recent-dirs-default true
+
+# zoxide
+eval "$(zoxide init zsh)"
+
+# --- Local and Host-specific Overrides ---
+LOCAL_RC=$HOME/.zshrc.local
+test -f $LOCAL_RC && source $LOCAL_RC
+
+if [ -f "$HOME/.zsh/host/$(hostname -s)" ]; then
+  source "$HOME/.zsh/host/$(hostname -s)"
+fi
+
+
+# --- MOTD Suppression ---
+touch "$HOME/.hushlogin"
+
+# --- Dircolors ---
+# Custom LS_COLORS via dircolors (XDG-compliant location)
+if (( $+commands[dircolors] )); then   # zsh way to check if command exists
+  local dc_file="${XDG_CONFIG_HOME:-$HOME/.config}/dircolors"
+  if [[ -r "$dc_file" ]]; then
+    eval "$(dircolors -b "$dc_file")"
+  else
+    eval "$(dircolors -b)"   # fallback to built-in defaults
+  fi
+fi
+
+# --- FZF Configuration ---
+# This block sources the fzf shell integration script.
+# It sets up default key bindings (e.g., Ctrl-T for file selection, Alt-C for directory navigation)
+# and fuzzy completion for commands, processes, etc.
+# This file is typically generated when you run the fzf installer (./install inside the top-level git)
+
+if [ -f ~/.fzf.zsh ]; then
+  source ~/.fzf.zsh
+fi
+
+# Bind CTRL-T to the fzf file picker
+bindkey '^T' fzf-file-widget
+
+# Bind ALT-C to our own function that has a directory preview / zoxide integration
+bindkey -r '\ec'           # Remove fzf’s default ALT-C if present
+zle -N fzf_cd_zoxide
+bindkey '\ec' fzf_cd_zoxide
+
+
+# Custom FZF options (optional, add if you want to override or extend defaults)
+# The installer script might already set FZF_DEFAULT_OPTS.
+# This example ensures --ansi is always enabled for colored input from tools like ls.
+# If you don't want to append, you can just set it: export FZF_DEFAULT_OPTS="--ansi --layout=reverse"
+# export FZF_DEFAULT_OPTS="$FZF_DEFAULT_OPTS --ansi"
+
+export FZF_PREVIEW_COMMAND='
+  if [ -d {} ]; then
+    # If it''s a directory, list its contents with lsd.
+    lsd -la --color=always {} # lsd doesn''t need --ignore
+  elif [ -f {} ]; then
+    # If it''s a regular file, preview with bat.
+    bat --color=always --style=numbers --line-range=:500 {}
+  else
+    echo "Cannot preview: {} (Not a file or directory)"
+  fi
+'
+# Set default fzf options for all invocations
+export FZF_DEFAULT_OPTS="--ansi --layout=reverse --height 65% --preview 'bat --color=always {} --style=numbers,changes --terminal-width $(($(tput cols) * 7 / 10))' --preview-window right:60%:border"
+
+# Customize command used by fzf's default integrations
+export FZF_DEFAULT_COMMAND="fd --type f --hidden --follow --exclude .git"
+
+# Options specific to Ctrl-R (history search)
+export FZF_CTRL_R_OPTS="--no-preview --ansi --layout=reverse --height 40%"
+
+# Options specific to Ctrl-T (file/directory search)
+#export FZF_CTRL_T_OPTS=""
+
+# ALT-C customization: directory finder with smart preview
+export FZF_ALT_C_COMMAND="fd --type d --hidden --follow --exclude .git"
+export FZF_ALT_C_OPTS="--preview '_fzf_preview_command_logic {}' --preview-window=right:50%:wrap --height=60% --layout=reverse"
+
+
+# --- End FZF Configuration ---
+
+# Direnv ; load and unload environment variables depending on the current directory
+eval "$(direnv hook zsh)"
+
+# Navi cheatsheet ; uses fzf
+#eval "$(navi widget zsh)"
+
+export NAVI_PATH="$HOME/.config/navi-local/cheats/active"
+export NAVI_SHELL=/usr/bin/zsh
+export NAVI_FZF_OPTS="--layout=reverse --height=60%"
+
+_call_navi() {
+    local selected
+    if selected="$(navi --print --path "$HOME/.config/navi-local/cheats/active" </dev/tty)"; then
+        LBUFFER="$selected"
+    fi
+    zle redisplay
+}
+
+zle -N _call_navi
+bindkey '^G' _call_navi # Or '^n' if you prefer that
+
+
+# Remove all the Atuin default bindings
+export ATUIN_NOBIND="true"
+# --- Atuin Magical Shell History Initialization ---
+eval "$(atuin init zsh)"
+
+bindkey -M viins '^R' atuin-search-viins
+bindkey -M vicmd '^R' atuin-search-vicmd
+
+# --- Starship Prompt Initialization ---
+# This MUST be the absolute LAST line in your .zshrc
+eval "$(starship init zsh)"
+

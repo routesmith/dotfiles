@@ -1,0 +1,16 @@
+#!/bin/bash
+
+if [ -e /etc/arch-release ]; then
+  # Try to send both locally and to remote host, if we can.
+  if [ -S "$HOME/.clipper.sock" -a -S "$HOME/.clipper-remote.sock"  ]; then
+    tee \
+      >(socat - UNIX-CLIENT:$HOME/.clipper.sock) \
+      | socat - UNIX-CLIENT:$HOME/.clipper-remote.sock
+  elif [ -S "$HOME/.clipper.sock" ]; then
+    socat - UNIX-CLIENT:$HOME/.clipper.sock
+  elif [ -S "$HOME/.clipper-remote.sock" ]; then
+    socat - UNIX-CLIENT:$HOME/.clipper-remote.sock
+  fi
+else
+  nc -U ~/.clipper.sock
+fi
