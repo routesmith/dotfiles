@@ -79,8 +79,50 @@ set-option -g default-terminal "tmux-256color"
 set-option -ga terminal-overrides ',xterm-256color:Tc'
 
 # Mouse can be used to select panes, select windows (by clicking on the status
-# bar), resize panes. For default bindings see `tmux list-keys`.
+# bar), resize panes, enables drag-select, and scroll buffer with mousewheel.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Mouse Behavior Overview (Wezterm + tmux + Neovim on WSL/Windows 11)
+#
+# Mouse is enabled globally: set-option -g mouse on
+# This allows pane/window selection (status bar click), resize, drag-select,
+# scroll with wheel, and copy-mode entry on scroll/drag.
+#
+# Key contexts:
+# - Plain Wezterm pane (no tmux): Wezterm handles copy/paste fully.
+# - Inside tmux: tmux intercepts most mouse events → uses internal buffers.
+# - Inside tmux + Neovim: Neovim mouse mode overrides some tmux behaviors.
+# - tmux copy-mode / buffer select: tmux owns selection/paste.
+#
+# Left Mouse:
+#   - Drag-select: Highlights. Release/Enter copies to tmux buffer + system clipboard (OSC 52).
+#     In Neovim: Neovim visual select (registers / system clipboard if unnamedplus).
+#   - Single click: Focus or cursor jump (Neovim).
+#   - Double click: Snap-select word/region → copy to clipboard (Wezterm/Neovim) or nothing (tmux).
+#
+# Middle Mouse:
+#   - Click: Pastes tmux buffer (tmux intercepts). In Neovim: pastes system clipboard.
+#     Outside tmux: pastes system clipboard.
+#   - Scroll: Enters/scrolls copy-mode (tmux), scrolls view (Neovim), or plain output.
+#
+# Right Mouse:
+#   - Click: Opens tmux menu (operations) or Wezterm context (outside tmux).
+#   - Double click: Passthrough (two clicks → menu open/close).
+#
+# Notes:
+# - Yank (y in copy-mode or mouse release) forwards to system clipboard via OSC 52.
+# - Middle mouse pastes tmux buffer (not system clipboard) when tmux is active.
+# - Ctrl+Shift+V (Wezterm) always pastes system clipboard, bypassing tmux.
+# - Nested tmux: Each level has isolated buffers; middle mouse pastes from the active (deepest) tmux.
+#
+# For Wezterm-side mouse tweaks, see ~/.config/wezterm/wezterm-wsl.lua
+# ──────────────────────────────────────────────────────────────────────────────
+
+config.mouse_bindings = { ... }
+
+# For default bindings see `tmux list-keys`.
 set-option -g mouse on
+
 
 
 # Stay in copy mode on drag end.
