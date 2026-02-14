@@ -18,6 +18,8 @@ chezmoi apply
 
 ### tmux + Wezterm + Neovim Mouse & Clipboard Behavior (WSL / Windows 11)
 
+**Note:** This section covers mouse & clipboard behavior in WSL (tmux + Wezterm + Neovim). Windows-specific details (e.g., PowerShell Terminal right-click flush, powershell.exe clipboard bridging) on configuration are kept elsewhere (may merge here or provide a reference in the future).
+
 Mouse is enabled in tmux (`set -g mouse on`) and Wezterm (custom bindings). Behavior changes depending on context:
 
 - **Yank / Copy**:
