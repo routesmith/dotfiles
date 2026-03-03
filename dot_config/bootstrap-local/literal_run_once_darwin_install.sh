@@ -32,6 +32,9 @@ brew install \
     1password-cli \
     lftp \
     renameutils \
+    pstree \
+    imagemagick \
+    koekeishiya/formulae/skhd \
     --cask raycast
 
 echo "✅ [macOS] Homebrew packages installed."
