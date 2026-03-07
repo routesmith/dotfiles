@@ -123,7 +123,15 @@ set-option -ga terminal-overrides ',xterm-256color:Tc'
 # For default bindings see `tmux list-keys`.
 set-option -g mouse on
 
+# Plain left click should only focus/select the pane.
+# This prevents the "click to focus WezTerm window and end up in tmux selection"
+# annoyance on Windows when the terminal receives the focus-click.
+bind-key -T root MouseDown1Pane select-pane -t '{mouse}'
 
+# Disable drag-selection outside copy-mode.
+# Keep mouse for pane focus, status clicks, resize, wheel scroll, etc.
+unbind-key -T root MouseDrag1Pane
+unbind-key -T root MouseDragEnd1Pane
 
 # Stay in copy mode on drag end.
 # (Would use `bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X
