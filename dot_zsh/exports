@@ -163,6 +163,11 @@ if [ -d /opt/homebrew ]; then
   export HOMEBREW_REPOSITORY="/opt/homebrew"
 fi
 
+if [ -d $HOME/.deno ]; then
+    export DENO_INSTALL="$HOME/.deno"
+fi
+
+
 #export RIPGREP_CONFIG_PATH=$HOME/.rgrc
 
 # Shellbot.

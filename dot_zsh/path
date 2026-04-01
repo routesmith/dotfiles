@@ -107,6 +107,7 @@ prepend_to PATH "$HOME/bin"
 prepend_to PATH "$HOME/.cargo/bin"
 prepend_to PATH "$HOME/go/bin"
 prepend_to PATH "$HOME/neovim/bin"
+prepend_to PATH "$HOME/.deno/bin"
 
 
 # Normally these come from `/etc/man.conf`, but only if MANPATH is empty, so
