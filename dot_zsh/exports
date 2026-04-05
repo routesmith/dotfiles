@@ -137,8 +137,10 @@ function () {
 
 
 # SSH authentication
-export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
-#
+if [[ -z "${SSH_AUTH_SOCK-}" && -S "$HOME/.ssh/agent.sock" ]]; then
+  export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+fi
+
 # for the benefit of CPAN and potentially others
 export FTP_PASSIVE=1
 
