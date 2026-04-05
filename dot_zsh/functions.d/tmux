@@ -9,12 +9,21 @@ function tmux() {
 
   local ENV_OVERRIDES=()
 
-  # Make sure even pre-existing tmux sessions use the latest SSH_AUTH_SOCK.
-  # Inspired by: https://gist.github.com/lann/6771001
-  if [ -r "$SSH_AUTH_SOCK" -a ! -L "$SSH_AUTH_SOCK" ]; then
-    ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/ssh_auth_sock"
-    ENV_OVERRIDES+=(SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock")
+# Make sure even pre-existing tmux sessions use the latest SSH_AUTH_SOCK.
+# Inspired by: https://gist.github.com/lann/6771001
+#
+# Keep tmux sessions on WSL pinned to a stable SSH agent socket path.
+# This lets old tmux sessions follow the current forwarded/relayed agent.
+if [[ -n "${WSL_DISTRO_NAME-}" && -n "${SSH_AUTH_SOCK-}" ]]; then
+  local tmux_ssh_sock="$HOME/.ssh/ssh_auth_sock"
+
+  mkdir -p "$HOME/.ssh"
+
+  if [[ "$SSH_AUTH_SOCK" != "$tmux_ssh_sock" && -S "$SSH_AUTH_SOCK" ]]; then
+    ln -snf "$SSH_AUTH_SOCK" "$tmux_ssh_sock"
+    ENV_OVERRIDES+=(SSH_AUTH_SOCK="$tmux_ssh_sock")
   fi
+fi
 
   # Same for KITTY_LISTEN_ON (although note, "unix:" prefix must be stripped).
   local KITTY_SOCK=${KITTY_LISTEN_ON##unix:}

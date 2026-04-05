@@ -137,7 +137,7 @@ function () {
 
 
 # SSH authentication
-if [[ -z "${SSH_AUTH_SOCK-}" && -S "$HOME/.ssh/agent.sock" ]]; then
+if [[ -n "${WSL_DISTRO_NAME-}" ]] && [[ -z "${SSH_AUTH_SOCK-}" ]] && [[ -S "$HOME/.ssh/agent.sock" ]]; then
   export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 fi
 
