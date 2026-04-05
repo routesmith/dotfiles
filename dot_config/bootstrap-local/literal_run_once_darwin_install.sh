@@ -34,6 +34,7 @@ brew install \
     renameutils \
     pstree \
     imagemagick \
+    treesitter-cli \
     koekeishiya/formulae/skhd \
     --cask raycast
 
