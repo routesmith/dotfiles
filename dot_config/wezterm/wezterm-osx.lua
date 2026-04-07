@@ -36,5 +36,14 @@ config.font = wezterm.font("JetBrainsMono NF", { weight = "Bold", italic = false
 -- config.font = wezterm.font("Hack Nerd Font", { weight = "Bold", italic = false })
 config.font_size = 13
 
+-- Keys
+config.keys = {
+  {
+    key = 'Enter',
+    mods = 'SHIFT',
+    action = wezterm.action.SendString '\x1b[13;2u',
+  },
+}
+
 -- and finally, return the configuration to wezterm
 return config

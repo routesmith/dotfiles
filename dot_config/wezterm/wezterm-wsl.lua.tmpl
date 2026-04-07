@@ -76,6 +76,11 @@ config.keys = {
     mods = 'CTRL|SHIFT',
     action = act.PasteFrom 'Clipboard',
   },
+  {
+    key = 'Enter',
+    mods = 'SHIFT',
+    action = act.SendString '\x1b[13;2u',
+  },
 }
 
 -- Launch menu placeholder
