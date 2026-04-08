@@ -1,0 +1,5 @@
+# Never commit Claude/AI session files
+.claude/
+CLAUDE.md
+**/.claude/**
+**/CLAUDE.md
