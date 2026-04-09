@@ -35,8 +35,10 @@ brew install \
     pstree \
     imagemagick \
     treesitter-cli \
+    claude \
     koekeishiya/formulae/skhd \
-    --cask raycast
+    --cask raycast \
+    --cask claude-code
 
 echo "✅ [macOS] Homebrew packages installed."
 
