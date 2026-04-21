@@ -36,9 +36,14 @@ brew install \
     imagemagick \
     treesitter-cli \
     claude \
+    chatgpt \
+    codex \
+    codex-app \
+    uv \
     koekeishiya/formulae/skhd \
     --cask raycast \
-    --cask claude-code
+    --cask claude-code \
+    --cask proton-drive
 
 echo "✅ [macOS] Homebrew packages installed."
 
