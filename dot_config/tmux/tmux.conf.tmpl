@@ -197,18 +197,16 @@ set-option -g window-status-bell-style fg=yellow,bold,underscore
 # Add : to the default list (" -_@") of word separators.
 set-option -ga word-separators :
 
-# Make sure we always start at 1, even when invoked from a .tmux wrapper script.
-set-environment -g SHLVL 1
+# Clipboard integration: external helper per OS; tmux internal clipboard disabled.
+set -s set-clipboard off
 
-# Clipper / WSL clip.exe to interact with the system clipboard.
-#bind-key y run-shell "tmux save-buffer - | nc -U ~/.clipper.sock"
-#bind-key y run-shell "tmux save-buffer - | nc -N localhost 8377"
+{{ if contains "microsoft" .chezmoi.kernel.osrelease -}}
 bind-key y run-shell "tmux save-buffer - | clip.exe"
-
-# "copy-pipe" requires tmux >= 1.8
-#bind-key -T copy-mode-vi Enter send-keys -X copy-pipe-and-cancel "nc -U ~/.clipper.sock"
-#bind-key -T copy-mode-vi Enter send-keys -X copy-pipe-and-cancel "nc -N localhost 8377"
 bind-key -T copy-mode-vi Enter send-keys -X copy-pipe-and-cancel "clip.exe"
+{{- else if eq .chezmoi.os "darwin" -}}
+bind-key y run-shell "tmux save-buffer - | nc -N localhost 8377"
+bind-key -T copy-mode-vi Enter send-keys -X copy-pipe-and-cancel "nc -N localhost 8377"
+{{- end }}
 
 # Search back to last prompt (mnemonic: "[b]ack").
 bind-key b copy-mode\; send-keys -X start-of-line\; send-keys -X search-backward "❯"\; send-keys -X next-word
