@@ -17,7 +17,7 @@ async_export() {
   local WORKER="async_worker_${ID}"
   local CALLBACK="async_worker_callback_${ID}"
 
-  if [ -f "$HOME/.zsh/zsh-async/async.zsh" ]; then
+  if [ -f "$HOME/.zsh/plugins/zsh-async/async.zsh" ]; then
     eval "
       $CALLBACK() {
         local STATUS=\$2

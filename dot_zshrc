@@ -51,8 +51,8 @@ if [ -d "$HOME/.zsh/functions.d" ]; then
 fi
 
 # Community completions from https://github.com/zsh-users/zsh-completions
-if [ -d "$HOME/.zsh/zsh-completions/src" ]; then
-  fpath=("$HOME/.zsh/zsh-completions/src" $fpath)
+if [ -d "$HOME/.zsh/plugins/zsh-completions/src" ]; then
+  fpath=("$HOME/.zsh/plugins/zsh-completions/src" $fpath)
 fi
 
 # Local/custom completion sources:
@@ -70,7 +70,8 @@ compinit -u
 zstyle ':completion:*' matcher-list '' '+m:{[:lower:]}={[:upper:]}' '+m:{[:upper:]}={[:lower:]}' '+m:{_-}={-_}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
 
 zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
-zstyle ':completion:*' menu select=1
+# zstyle ':completion:*' menu select=1
+zstyle ':completion:*' menu no
 zstyle ':completion:*:cd:*' local-dirs true
 zstyle -e ':completion:*' special-dirs '[[ $PREFIX = (../)#(..) ]] && reply=(..)'
 
@@ -78,7 +79,7 @@ zstyle ':completion:*:descriptions' format '%U%B--- %d ---%b%u'
 zstyle ':completion:*:messages' format '%d'
 zstyle ':completion:*:warnings' format 'No matches for: %d'
 zstyle ':completion:*:corrections' format '%B%d%b'
-zstyle ':completion:*:default' menu-select
+#zstyle ':completion:*:default' menu-select
 
 zstyle ':completion:*:processes' command 'ps -axco pid,tty,user,command'
 zstyle ':completion:*:functions' ignored-patterns '_*'
@@ -121,7 +122,6 @@ setopt NO_WARN_CREATE_GLOBAL
 # --- General Zsh Options ---
 setopt AUTO_CD
 setopt AUTO_LIST
-setopt AUTO_MENU
 setopt AUTO_PARAM_SLASH
 setopt BASH_REMATCH
 setopt EXTENDED_GLOB
@@ -130,7 +130,6 @@ setopt IGNORE_EOF
 setopt INTERACTIVE_COMMENTS
 setopt LIST_PACKED
 setopt LONG_LIST_JOBS
-setopt MENU_COMPLETE
 setopt NO_BG_NICE
 setopt NO_HUP
 setopt NO_NOTIFY
@@ -143,10 +142,26 @@ unsetopt CORRECT
 unsetopt CORRECT_ALL
 unsetopt FLOW_CONTROL
 unsetopt LIST_BEEP
+unsetopt AUTO_MENU
+unsetopt MENU_COMPLETE
 unsetopt NOMATCH
 unsetopt PRINT_EXIT_VALUE
 
 # --- Plugins ---
+
+# fzf-tab
+if (( $+commands[fzf] )) && [ -f "$HOME/.zsh/plugins/fzf-tab/fzf-tab.plugin.zsh" ]; then
+    source "$HOME/.zsh/plugins/fzf-tab/fzf-tab.plugin.zsh"
+
+    _fzf_tab_fzf() {
+        FZF_DEFAULT_OPTS= command fzf "$@"
+    }
+
+    zstyle ':fzf-tab:*' fzf-command _fzf_tab_fzf
+    zstyle ':fzf-tab:*' switch-group ',' '.'
+    zstyle ':fzf-tab:*' fzf-flags --height=65% --layout=reverse --ansi
+    zstyle ':fzf-tab:complete:cd:*' preview 'lsd -la --color=always -- "$realpath" 2>/dev/null || ls -la -- "$realpath"'
+fi
 
 # Automatically quote or escape special characters in URLs as you type them
 autoload -U url-quote-magic
@@ -286,7 +301,7 @@ bindkey "^[[1;5D" backward-word # For Arch.
 
 
 # zsh-async
-if [ -f "$HOME/.zsh/zsh-async/zsh-async.plugin.zsh" ]; then
+if [ -f "$HOME/.zsh/plugins/zsh-async/zsh-async.plugin.zsh" ]; then
     autoload -Uz async && async
     # Do we really need this:
     source "$HOME/.zsh/plugins/zsh-async/zsh-async.plugin.zsh" # Some async init might be in plugin file
@@ -506,4 +521,3 @@ bindkey -M vicmd '^R' atuin-search-vicmd
 # --- Starship Prompt Initialization ---
 # This MUST be the absolute LAST line in your .zshrc
 eval "$(starship init zsh)"
-
