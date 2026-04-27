@@ -1,4 +1,9 @@
 #!/usr/bin/env zsh
+# ~/.zsh/exports
+#
+# Public-safe exports.
+#
+
 # Run a slow-running command in the background to compute a value and `export`
 # it.
 #
@@ -169,21 +174,14 @@ if [ -d $HOME/.deno ]; then
     export DENO_INSTALL="$HOME/.deno"
 fi
 
+# Public-safe environment exports
 
-#export RIPGREP_CONFIG_PATH=$HOME/.rgrc
+# Optional private exports.
+# This file is local-only and should not be committed.
+_private_exports="$HOME/.zsh/exports.local"
 
-# Shellbot.
-# For now, requires a manual `cargo build --release`.
-#export SHELLBOT="$HOME/.config/nvim/pack/bundle/opt/shellbot/target/release/shellbot $HOME/.config/shellbot/prompt"
-#export ANTHROPIC_MODEL=claude-sonnet-4-20250514
-#export OPENAI_MODEL=gpt-4.1
+if [[ -f "$_private_exports" ]]; then
+  source "$_private_exports"
+fi
 
-# () {
-#   local PRIVATE="$HOME/.zsh/exports.private"
-#   if grep 'com\.wincent\.git-cipher' "$PRIVATE" &> /dev/null; then
-#     # Don't source still-encrypted file.
-#   else
-#     # Source it if it's actually there.
-#     test -e "$PRIVATE" && source "$PRIVATE"
-#   fi
-# }
+unset _private_exports

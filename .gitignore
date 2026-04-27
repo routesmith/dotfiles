@@ -3,3 +3,7 @@
 CLAUDE.md
 **/.claude/**
 **/CLAUDE.md
+
+# Personal
+dot_zsh/exports.local
+dot_zsh/exports.local.tmpl
