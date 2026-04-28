@@ -1,0 +1,97 @@
+# ~/.zsh/functions.d/clip_and_paste
+#
+# Cross-platform clipboard helpers for zsh.
+#
+# Usage:
+#   echo "hello" | clip
+#   clip file.txt
+#   paste
+#
+# Short wrappers:
+#   C = clip
+#   P = paste
+#
+# Backend policy:
+# - macOS copy uses clipper via nc localhost 8377.
+# - WSL copy uses UTF-16LE conversion into Windows clip.exe.
+# - WSL paste uses PowerShell Get-Clipboard.
+# - Linux desktop falls back to wl-copy/wl-paste or xclip.
+
+_clip_is_wsl() {
+    [[ -n "${WSL_DISTRO_NAME:-}" || -n "${WSL_INTEROP:-}" ]] && return 0
+    [[ -r /proc/sys/kernel/osrelease ]] && grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease
+}
+
+_clip_input() {
+    if (( $# > 0 )); then
+        cat -- "$@"
+    else
+        cat
+    fi
+}
+
+if _clip_is_wsl && [[ -x /mnt/c/Windows/System32/clip.exe ]]; then
+
+    clip() {
+        _clip_input "$@" \
+            | iconv -f UTF-8 -t UTF-16LE \
+            | /mnt/c/Windows/System32/clip.exe
+    }
+
+    paste() {
+        /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $s = Get-Clipboard -Raw; if ($null -ne $s) { [Console]::Out.Write($s) }' \
+            | sed $'s/\r$//'
+    }
+
+elif [[ "$OSTYPE" == darwin* ]]; then
+
+    clip() {
+        _clip_input "$@" | nc localhost 8377
+    }
+
+    paste() {
+        pbpaste
+    }
+
+elif command -v wl-copy >/dev/null 2>&1 && command -v wl-paste >/dev/null 2>&1; then
+
+    clip() {
+        _clip_input "$@" | wl-copy
+    }
+
+    paste() {
+        wl-paste
+    }
+
+elif command -v xclip >/dev/null 2>&1; then
+
+    clip() {
+        _clip_input "$@" | xclip -selection clipboard
+    }
+
+    paste() {
+        xclip -selection clipboard -o
+    }
+
+else
+
+    clip() {
+        print -u2 "clip: no supported clipboard backend found"
+        return 127
+    }
+
+    paste() {
+        print -u2 "paste: no supported clipboard backend found"
+        return 127
+    }
+
+fi
+
+C() {
+    clip "$@"
+}
+
+P() {
+    paste "$@"
+}
