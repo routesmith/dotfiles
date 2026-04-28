@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# pluck — pull instruction payloads from vault pattern docs, copy to clipboard
+#
+# Usage:
+#   pluck project-instructions <tool>
+#   pluck engagement-brief <tool>
+#   pluck engagement-brief shared
+#
+# Env:
+#   GLAMDRING_VAULT  Path to vault root.
+#                    Default: Should be defined in ~/.zsh/exports.local (private exports)
+
+set -euo pipefail
+VAULT="${GLAMDRING_VAULT:?GLAMDRING_VAULT is not set. Define it in exports.local.}"
+SYSTEMS_DIR="$VAULT/Self/systems/ai"
+
+declare -A PATTERN_DOCS=(
+    ["project-instructions"]="$SYSTEMS_DIR/ai-tool-project-instructions-pattern.md"
+    ["engagement-brief"]="$SYSTEMS_DIR/ai-tool-engagement-brief-pattern.md"
+)
+
+usage() {
+    cat >&2 <<EOF
+Usage: pluck <pattern-type> <tool-or-section>
+
+Pattern types:
+  project-instructions    Vault identity + capture trigger
+  engagement-brief        Session posture + capture-time review
+
+Tool/section:
+  <tool>                  e.g. claude, grok, chatgpt, gemini
+  shared                  (engagement-brief only) base text without overlay
+
+Env:
+  GLAMDRING_VAULT         Vault root. Default: $VAULT
+EOF
+    exit 64
+}
+
+[[ $# -eq 2 ]] || usage
+PATTERN_TYPE="$1"
+TARGET="$2"
+
+DOC="${PATTERN_DOCS[$PATTERN_TYPE]:-}"
+[[ -n "$DOC" ]] || {
+    echo "pluck: unknown pattern type: $PATTERN_TYPE" >&2
+    usage
+}
+[[ -f "$DOC" ]] || {
+    echo "pluck: pattern doc not found: $DOC" >&2
+    exit 66
+}
+
+# --- payload extraction ---
+# Find a `## Worked example: <name>` section (case-insensitive) and pull the
+# contents of the first ```instructions ... ``` fence inside it.
+extract_payload() {
+    local doc="$1" name="$2"
+    awk -v name="$name" '
+    BEGIN {
+      in_section = 0
+      in_fence   = 0
+      target = tolower("## worked example: " name)
+    }
+    /^## Worked example:/ {
+      header = tolower($0)
+      if (header == target) {
+        in_section = 1
+        next
+      } else if (in_section) {
+        exit
+      } else {
+        next
+      }
+    }
+    in_section && /^```instructions[[:space:]]*$/ { in_fence = 1; next }
+    in_section && in_fence && /^```[[:space:]]*$/ { exit }
+    in_section && in_fence { print }
+  ' "$doc"
+}
+
+PAYLOAD=""
+
+case "$PATTERN_TYPE" in
+project-instructions)
+    PAYLOAD="$(extract_payload "$DOC" "$TARGET")"
+    [[ -n "$PAYLOAD" ]] || {
+        echo "pluck: no worked example for '$TARGET' in $DOC" >&2
+        exit 65
+    }
+    ;;
+engagement-brief)
+    if [[ "$TARGET" == "shared" ]]; then
+        PAYLOAD="$(extract_payload "$DOC" "Shared base")"
+        [[ -n "$PAYLOAD" ]] || {
+            echo "pluck: no shared base in $DOC" >&2
+            exit 65
+        }
+    else
+        SHARED="$(extract_payload "$DOC" "Shared base")"
+        [[ -n "$SHARED" ]] || {
+            echo "pluck: no shared base in $DOC" >&2
+            exit 65
+        }
+
+        OVERLAY="$(extract_payload "$DOC" "$TARGET overlay")"
+        if [[ -z "$OVERLAY" ]]; then
+            echo "pluck: no overlay section for '$TARGET' — using shared base only" >&2
+            PAYLOAD="$SHARED"
+        elif [[ "$OVERLAY" =~ ^\(empty ]]; then
+            echo "pluck: '$TARGET' overlay is empty — using shared base only" >&2
+            PAYLOAD="$SHARED"
+        else
+            PAYLOAD="$SHARED"$'\n\n---\n\n'"$OVERLAY"
+        fi
+    fi
+    ;;
+esac
+
+# --- clipboard ---
+# Mirrors tmux config: WSL → iconv | clip.exe; macOS → nc-bridge then pbcopy.
+copy_to_clipboard() {
+    local payload="$1"
+
+    if [[ -n "${WSL_DISTRO_NAME:-}" ]] && [[ -x /mnt/c/Windows/System32/clip.exe ]]; then
+        printf '%s' "$payload" | iconv -f UTF-8 -t UTF-16LE | /mnt/c/Windows/System32/clip.exe
+        echo "pluck: copied to Windows clipboard" >&2
+        return
+    fi
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if nc -z localhost 8377 2>/dev/null; then
+            printf '%s' "$payload" | nc localhost 8377
+            echo "pluck: copied via clipboard bridge (port 8377)" >&2
+            return
+        fi
+        if command -v pbcopy >/dev/null; then
+            printf '%s' "$payload" | pbcopy
+            echo "pluck: copied to macOS clipboard" >&2
+            return
+        fi
+    fi
+
+    echo "pluck: no clipboard tool available, printing to stdout" >&2
+    printf '%s\n' "$payload"
+}
+
+copy_to_clipboard "$PAYLOAD"
