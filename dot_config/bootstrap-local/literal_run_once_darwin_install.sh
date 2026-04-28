@@ -41,6 +41,7 @@ brew install \
     codex-app \
     uv \
     koekeishiya/formulae/skhd \
+    gh \
     --cask raycast \
     --cask claude-code \
     --cask proton-drive
