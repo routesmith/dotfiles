@@ -12,7 +12,7 @@
 
 set -euo pipefail
 VAULT="${GLAMDRING_VAULT:?GLAMDRING_VAULT is not set. Define it in exports.local.}"
-SYSTEMS_DIR="$VAULT/Self/systems/ai"
+SYSTEMS_DIR="$VAULT/AI/systems"
 
 declare -A PATTERN_DOCS=(
     ["project-instructions"]="$SYSTEMS_DIR/ai-tool-project-instructions-pattern.md"

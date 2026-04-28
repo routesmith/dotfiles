@@ -13,7 +13,7 @@ if [[ -d $JQ_SRC ]]; then
     git submodule update --init
     echo "Building jq $VERSION_CLEAN..."
     autoreconf -i
-    ./configure --with-oniguruma=builtin --prefix=/home/craig/.local
+    ./configure --with-oniguruma=builtin --prefix=$HOME/.local
     make clean
     make -j8
     make check
