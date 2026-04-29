@@ -140,6 +140,15 @@ function () {
   export LSCOLORS
 }
 
+# macOS local shells: use 1Password SSH agent.
+# Remote SSH sessions preserve forwarded SSH_AUTH_SOCK.
+if [[ "$OSTYPE" == darwin* ]] && [[ -z "${SSH_CONNECTION-}" ]] && [[ -z "${SSH_CLIENT-}" ]]; then
+  op_ssh_sock="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+  if [[ -S "$op_ssh_sock" ]]; then
+    export SSH_AUTH_SOCK="$op_ssh_sock"
+  fi
+  unset op_ssh_sock
+fi
 
 # SSH authentication
 if [[ -n "${WSL_DISTRO_NAME-}" ]] && [[ -z "${SSH_AUTH_SOCK-}" ]] && [[ -S "$HOME/.ssh/agent.sock" ]]; then
