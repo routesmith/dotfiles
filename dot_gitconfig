@@ -1,0 +1,24 @@
+# ~/.gitconfig
+# Global config
+
+[core]
+    pager = delta
+    autocrlf = input
+
+[alias]
+    hist = log --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
+    last = log -1 HEAD
+
+[push]
+    default = simple
+
+[delta]
+    features = side-by-side line-numbers decorations
+    syntax-theme = gruvbox-dark
+    navigate = true
+    line-numbers = true
+
+[delta "decorations"]
+    commit-decoration-style = bold yellow box
+    file-style = bold yellow ul
+    hunk-header-style = line-number syntax
