@@ -7,9 +7,15 @@
 function man() {
     local system_man="/usr/bin/man"
 
-    if command -v nvim > /dev/null 2>&1; then
-        MANPAGER='nvim +Man!' "$system_man" "$@"
+    if [[ -x "$system_man" ]]; then
+        if command -v nvim >/dev/null 2>&1; then
+            MANPAGER='nvim +Man!' "$system_man" "$@"
+        elif command -v bat >/dev/null 2>&1; then
+            MANPAGER='bat -p --paging=always' "$system_man" "$@"
+        else
+            "$system_man" "$@"
+        fi
     else
-         MANPAGER='bat -p --paging=always' "$system_man" "$@"
+        command man "$@"
     fi
 }

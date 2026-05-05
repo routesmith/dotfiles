@@ -1,8 +1,10 @@
 #!/usr/bin/env zsh
-# Turn off flow control (prevent CTRL-S from capturing all output).
-stty -ixon
+if [[ -t 0 ]]; then
+  # Turn off flow control (prevent CTRL-S from capturing all output).
+  stty -ixon
 
-# Allow terminal to "see" C-O.
-#
-# https://apple.stackexchange.com/a/3255/158927
-stty discard undef
+  # Allow terminal to "see" C-O.
+  #
+  # https://apple.stackexchange.com/a/3255/158927
+  stty discard undef
+fi

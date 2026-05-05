@@ -3,15 +3,35 @@
 # Fuzzy-search filenames only and open selected file in Neovim
 
 vg() {
+    local cmd
+    for cmd in fd fzf; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            print -u2 "vg: missing required command: $cmd"
+            return 127
+        fi
+    done
+
+    local editor="${EDITOR:-vi}"
+    if command -v nvim >/dev/null 2>&1; then
+        editor=nvim
+    elif ! command -v "$editor" >/dev/null 2>&1; then
+        print -u2 "vg: missing editor: $editor"
+        return 127
+    fi
+
     local file
     file="$(fd --type f --hidden --follow --exclude .git . "${@:-.}" |
         fzf --ansi --preview '
       if [ -f {} ]; then
-        bat --color=always --style=numbers --line-range=:500 {}
+        if command -v bat >/dev/null 2>&1; then
+          bat --color=always --style=numbers --line-range=:500 {}
+        else
+          sed -n "1,120p" {}
+        fi
       else
         echo "Not a regular file: {}"
       fi
     ')"
 
-    [[ -n $file ]] && nvim "$file"
+    [[ -n $file ]] && "$editor" "$file"
 }

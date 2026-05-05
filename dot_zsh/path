@@ -121,7 +121,7 @@ prepend_to MANPATH "$HOME/.local/share/man"
 prepend_to PATH /usr/local/opt/llvm/bin
 test -n "$N_PREFIX" && prepend_to PATH "$N_PREFIX/bin"
 
-prepend_to "$VOLTA_HOME/bin"
+[[ -n "$VOLTA_HOME" ]] && prepend_to PATH "$VOLTA_HOME/bin"
 
 prepend_to PATH "$HOME/.zsh/bin"
 prepend_to PATH "$HOME/bin"

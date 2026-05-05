@@ -1,0 +1,7 @@
+_have_strict() {
+  if [[ "${DOTFILES_PROFILE:-workstation}" == "proxmox-host" ]]; then
+    [[ "${DOTFILES_ENABLE_PLUS_TOOLS:-0}" == "1" ]] && command -v "$1" >/dev/null 2>&1
+  else
+    command -v "$1" >/dev/null 2>&1
+  fi
+}

@@ -3,6 +3,12 @@
 # chezmoi zsh helper for interactive dotfile management
 cz() {
     local cmd file
+    for cmd in chezmoi fzf; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            print -u2 "cz: missing required command: $cmd"
+            return 127
+        fi
+    done
 
     case "$1" in
     ea)
@@ -34,6 +40,10 @@ cz() {
         ;;
 
     add)
+        if ! command -v fd >/dev/null 2>&1; then
+            print -u2 "cz add: missing required command: fd"
+            return 127
+        fi
         file=$(fd . ~ --type f --strip-cwd-prefix | grep -vFf <(chezmoi managed) | fzf --prompt="Add dotfile: " --height=40%) || return
         [[ -n $file ]] && chezmoi add ~/"$file"
         ;;

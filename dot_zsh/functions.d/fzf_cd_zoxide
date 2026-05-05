@@ -3,6 +3,14 @@
 # ALT-C directory navigation using zoxide + fzf + preview
 
 fzf_cd_zoxide() {
+    local cmd
+    for cmd in fd fzf zoxide; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            print -u2 "fzf_cd_zoxide: missing required command: $cmd"
+            return 127
+        fi
+    done
+
     local dir
     dir=$(fd --type d --hidden --follow --exclude .git |
         fzf --height=60% --layout=reverse \
@@ -10,7 +18,11 @@ fzf_cd_zoxide() {
     if [ -d {} ]; then
         ls -la --color=always {} 2>/dev/null
     elif [ -f {} ]; then
-        bat --color=always --style=numbers --line-range=:500 {} 2>/dev/null
+        if command -v bat >/dev/null 2>&1; then
+            bat --color=always --style=numbers --line-range=:500 {} 2>/dev/null
+        else
+            sed -n "1,120p" {} 2>/dev/null
+        fi
     else
         echo "Cannot preview: {}"
     fi

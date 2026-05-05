@@ -21,6 +21,8 @@
 # Skip interactive config in non-interactive shells
 [[ $- != *i* ]] && return
 
+[ -f "$HOME/.zsh/profile" ] && source "$HOME/.zsh/profile"
+
 # --- Global Configuration Variables ---
 typeset -A __MY_ZSH_VARS
 __MY_ZSH_VARS[ITALIC_ON]=$'\e[3m'
@@ -63,6 +65,8 @@ fi
 
 autoload -U compinit
 compinit -u
+
+autoload -Uz _have _have_strict
 
 # --- Completion Zstyles (AFTER compinit) ---
 # These configure the completion system initialized by compinit.
@@ -353,9 +357,11 @@ export NVM_DIR="$HOME/.nvm"
 # export PATH="$VOLTA_HOME/bin:$PATH"
 
 # Go Language Environment Setup
-export GOROOT="$HOME/.go/go" # Path to your Go installation
-export GOPATH="$HOME/go"     # Path where your Go projects and modules live
-export PATH="$PATH:$GOROOT/bin:$GOPATH/bin" # Add both Go's binaries and GOPATH's binaries to PATH
+if _have go || [[ -d "$HOME/.go/go" ]]; then
+  export GOROOT="$HOME/.go/go" # Path to your Go installation
+  export GOPATH="$HOME/go"     # Path where your Go projects and modules live
+  export PATH="$PATH:$GOROOT/bin:$GOPATH/bin" # Add both Go's binaries and GOPATH's binaries to PATH
+fi
 
 export GIT_EDITOR="nvim" # Set a specific Git editor
 # export BROWSER="wslview" # Common for WSL2 to open in Windows browser
@@ -374,7 +380,7 @@ function -set-tab-and-window-title() {
 add-zsh-hook precmd -set-tab-and-window-title
 
 # `zsh-async` integration for non-blocking operations (if sourced after compinit)
-add-zsh-hook precmd bounce # This assumes 'bounce' function is defined elsewhere, or from a plugin.
+(( $+functions[bounce] )) && add-zsh-hook precmd bounce
 
 # Helper function: uses exa if available, otherwise falls back to ls
 #function _exa_or_ls() {
@@ -402,7 +408,7 @@ zstyle ':completion:*:*:cdr:*:*' menu selection
 zstyle ':chpwd:*' recent-dirs-default true
 
 # zoxide
-eval "$(zoxide init zsh)"
+_have zoxide && eval "$(zoxide init zsh)"
 
 # --- Local and Host-specific Overrides ---
 LOCAL_RC=$HOME/.zshrc.local
@@ -414,7 +420,7 @@ fi
 
 
 # --- MOTD Suppression ---
-touch "$HOME/.hushlogin"
+[[ -e "$HOME/.hushlogin" ]] || touch "$HOME/.hushlogin"
 
 # --- Dircolors ---
 # Custom LS_COLORS via dircolors (XDG-compliant location)
@@ -433,17 +439,25 @@ fi
 # and fuzzy completion for commands, processes, etc.
 # This file is typically generated when you run the fzf installer (./install inside the top-level git)
 
-if [ -f ~/.fzf.zsh ]; then
-  source ~/.fzf.zsh
+if [[ -t 0 && -t 1 ]]; then
+  if [ -f ~/.fzf.zsh ]; then
+    source ~/.fzf.zsh
+  else
+    # Debian/Ubuntu package installs these examples instead of ~/.fzf.zsh.
+    [ -r /usr/share/doc/fzf/examples/key-bindings.zsh ] && source /usr/share/doc/fzf/examples/key-bindings.zsh
+    [ -r /usr/share/doc/fzf/examples/completion.zsh ] && source /usr/share/doc/fzf/examples/completion.zsh
+  fi
+
+  # Bind CTRL-T to the fzf file picker
+  (( $+widgets[fzf-file-widget] )) && bindkey '^T' fzf-file-widget
+
+  # Bind ALT-C to our own function that has a directory preview / zoxide integration
+  bindkey -r '\ec'           # Remove fzf's default ALT-C if present
+  if _have fzf && _have fd && _have zoxide; then
+    zle -N fzf_cd_zoxide
+    bindkey '\ec' fzf_cd_zoxide
+  fi
 fi
-
-# Bind CTRL-T to the fzf file picker
-bindkey '^T' fzf-file-widget
-
-# Bind ALT-C to our own function that has a directory preview / zoxide integration
-bindkey -r '\ec'           # Remove fzf’s default ALT-C if present
-zle -N fzf_cd_zoxide
-bindkey '\ec' fzf_cd_zoxide
 
 
 # Custom FZF options (optional, add if you want to override or extend defaults)
@@ -483,7 +497,7 @@ export FZF_ALT_C_OPTS="--preview '_fzf_preview_command_logic {}' --preview-windo
 # --- End FZF Configuration ---
 
 # Direnv ; load and unload environment variables depending on the current directory
-eval "$(direnv hook zsh)"
+_have direnv && eval "$(direnv hook zsh)"
 
 # Navi cheatsheet ; uses fzf
 #eval "$(navi widget zsh)"
@@ -492,26 +506,28 @@ export NAVI_PATH="$HOME/.config/navi-local/cheats/active"
 export NAVI_SHELL=/usr/bin/zsh
 export NAVI_FZF_OPTS="--layout=reverse --height=60%"
 
-_call_navi() {
+if _have navi; then
+  _call_navi() {
     local selected
     if selected="$(navi --print --path "$HOME/.config/navi-local/cheats/active" </dev/tty)"; then
         LBUFFER="$selected"
     fi
     zle redisplay
-}
+  }
 
-zle -N _call_navi
-bindkey '^G' _call_navi # Or '^n' if you prefer that
+  zle -N _call_navi
+  bindkey '^G' _call_navi # Or '^n' if you prefer that
+fi
 
 
 # Remove all the Atuin default bindings
 export ATUIN_NOBIND="true"
 # --- Atuin Magical Shell History Initialization ---
-eval "$(atuin init zsh)"
+_have atuin && eval "$(atuin init zsh)"
 
-bindkey -M viins '^R' atuin-search-viins
-bindkey -M vicmd '^R' atuin-search-vicmd
+(( $+widgets[atuin-search-viins] )) && bindkey -M viins '^R' atuin-search-viins
+(( $+widgets[atuin-search-vicmd] )) && bindkey -M vicmd '^R' atuin-search-vicmd
 
 # --- Starship Prompt Initialization ---
 # This MUST be the absolute LAST line in your .zshrc
-eval "$(starship init zsh)"
+_have_strict starship && eval "$(starship init zsh)"

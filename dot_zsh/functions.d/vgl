@@ -3,6 +3,22 @@
 # Fuzzy grep using rg + fzf, opens selected file and line in Neovim.
 # ~/.zsh/functions.d/vgl
 vgl() {
+    local cmd
+    for cmd in rg fzf; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            print -u2 "vgl: missing required command: $cmd"
+            return 127
+        fi
+    done
+
+    local editor="${EDITOR:-vi}"
+    if command -v nvim >/dev/null 2>&1; then
+        editor=nvim
+    elif ! command -v "$editor" >/dev/null 2>&1; then
+        print -u2 "vgl: missing editor: $editor"
+        return 127
+    fi
+
     local selected file line
     local pattern dir
 
@@ -67,7 +83,7 @@ vgl() {
             "${ignores[@]}" 2>/dev/null |
             fzf --ansi \
                 --delimiter : \
-                --preview 'bat --style=numbers --color=always --highlight-line {2} {1}' \
+                --preview 'if command -v bat >/dev/null 2>&1; then bat --style=numbers --color=always --highlight-line {2} {1}; else sed -n "1,160p" {1}; fi' \
                 --preview-window=right:60%:wrap \
                 --height=60% --layout=reverse
     )" || return
@@ -76,5 +92,5 @@ vgl() {
     line="${selected#*:}"
     line="${line%%:*}"
 
-    [[ -f "$file" && -n "$line" ]] && nvim "$file" +$line
+    [[ -f "$file" && -n "$line" ]] && "$editor" "$file" +$line
 }
