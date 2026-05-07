@@ -91,8 +91,8 @@ fi
 CHEZMOI="$HOME/.local/bin/chezmoi"
 
 printf '==> chezmoi init --apply (profile=%s)\n' "$PROFILE"
-"$CHEZMOI" init --apply routesmith/dotfiles \
-  --data "{\"profile\": \"$PROFILE\"}"
+"$CHEZMOI" --override-data="{\"profile\": \"$PROFILE\"}" \
+  init --apply routesmith/dotfiles
 
 ZSH_PATH=$(command -v zsh || true)
 if [ -z "$ZSH_PATH" ]; then
