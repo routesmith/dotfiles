@@ -478,7 +478,7 @@ export FZF_PREVIEW_COMMAND='
   fi
 '
 # Set default fzf options for all invocations
-export FZF_DEFAULT_OPTS="--ansi --layout=reverse --height 65% --preview 'bat --color=always {} --style=numbers,changes --terminal-width $(($(tput cols) * 7 / 10))' --preview-window right:60%:border"
+export FZF_DEFAULT_OPTS="--ansi --layout=reverse --height 65% --preview 'bat --color=always {} --style=numbers,changes --terminal-width $(($(tput cols 2>/dev/null || echo 80) * 7 / 10))' --preview-window right:60%:border"
 
 # Customize command used by fzf's default integrations
 export FZF_DEFAULT_COMMAND="fd --type f --hidden --follow --exclude .git"

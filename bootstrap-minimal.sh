@@ -90,9 +90,16 @@ else
 fi
 CHEZMOI="$HOME/.local/bin/chezmoi"
 
-printf '==> chezmoi init --apply (profile=%s)\n' "$PROFILE"
-"$CHEZMOI" init --apply --no-tty --promptString "profile=$PROFILE" \
+printf '==> chezmoi init (profile=%s)\n' "$PROFILE"
+"$CHEZMOI" init --no-tty --promptString "profile=$PROFILE" \
   routesmith/dotfiles
+
+# init writes ~/.config/chezmoi/chezmoi.toml but does not reload its in-memory
+# data context for this invocation, so .chezmoi.config.data.profile would be
+# empty in the chezmoiignore/external templates if --apply ran in the same
+# call. A second invocation reads the freshly-rendered config.
+echo '==> chezmoi apply'
+"$CHEZMOI" apply
 
 ZSH_PATH=$(command -v zsh || true)
 if [ -z "$ZSH_PATH" ]; then
