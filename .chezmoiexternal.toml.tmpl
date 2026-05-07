@@ -1,7 +1,8 @@
 # This is a templated external config.
 # DO NOT `chezmoi add` this as it already lives in the source dir.
 
-# Neovim repo to pull down every so often.
+{{ if eq .chezmoi.config.data.profile "workstation" }}
+# Neovim repo to pull down every so often. Workstation only.
 [".config/nvim"]
 type = "git-repo"
 url = "git@github.com:{{ .github_username }}/nvim.git"
@@ -10,8 +11,11 @@ refreshPeriod = "2h" # How often chezmoi should check for updates (e.g., "1h", "
 # Recommended for clean pulls
 [".config/nvim".pull]
 args = ["--ff-only"]
+{{ end }}
 
-# Only grab the ZSH and tmux plugins if not on Windows
+# Only grab the ZSH and tmux plugins on workstation or server-minimal, and only
+# off-Windows. proxmox-host fetches nothing.
+{{ if or (eq .chezmoi.config.data.profile "workstation") (eq .chezmoi.config.data.profile "server-minimal") }}
 {{ if ne .chezmoi.os "windows" }}
 
 # ZSH Plugins
@@ -81,4 +85,5 @@ exact = true
 stripComponents = 1
 refreshPeriod = "672h" # How often chezmoi should check for updates (e.g., "1h", "daily", "never")
 
+{{ end }}
 {{ end }}

@@ -2,6 +2,7 @@
 .claude/
 CLAUDE.md
 
+{{ if eq .chezmoi.config.data.profile "workstation" }}
 {{ if eq .chezmoi.os "windows" }}
 
 # zsh — you don't run it here
@@ -72,4 +73,67 @@ CLAUDE.md
 
 # Ignore local machine configs
 .zshrc.local
+{{ end }}
+
+{{ else if eq .chezmoi.config.data.profile "server-minimal" }}
+
+# Workstation-only configs (GUI / heavyweight tooling not present on server hosts)
+.config/wezterm/
+.config/starship/
+.config/cship.toml
+.config/symlink_starship.toml
+.config/glow/
+.config/lsd/
+.config/atuin/
+
+# Externals not fetched on this profile (defensive: if leftover state appears, ignore it)
+.config/nvim/
+
+# Standard Linux non-workstation hygiene
+.zsh_history
+.zcompdump
+.bash_history
+.config/chezmoi
+.config/go
+.ssh/id_*
+.ssh/known_hosts
+.ssh/authorized_keys
+*.swp
+*.swo
+*.un~
+.gnupg/
+.zshrc.local
+
+{{ else if eq .chezmoi.config.data.profile "proxmox-host" }}
+
+# Workstation-only configs
+.config/wezterm/
+.config/starship/
+.config/cship.toml
+.config/symlink_starship.toml
+.config/glow/
+.config/lsd/
+.config/atuin/
+
+# Externals not fetched on this profile
+.config/nvim/
+
+# proxmox-host fetches no zsh plugins; ignore the tree to keep state clean
+.zsh/plugins/
+
+# Standard Linux non-workstation hygiene
+.zsh_history
+.zcompdump
+.bash_history
+.config/chezmoi
+.config/go
+.ssh/id_*
+.ssh/known_hosts
+.ssh/authorized_keys
+*.swp
+*.swo
+*.un~
+.gnupg/
+.zshrc.local
+
 {{ end }}

@@ -49,11 +49,13 @@ export CORRECT_IGNORE_FILE='.*'
 
 export PAGER=less
 
-# Ensure EDITOR is nvim, if installed, or vim if not installed.
+# Pick the best available editor: nvim → vim → vi.
 if builtin command -v nvim &> /dev/null; then
   export EDITOR=$(builtin command -v nvim)
+elif builtin command -v vim &> /dev/null; then
+  export EDITOR=$(builtin command -v vim)
 else
-  export EDITOR=vim
+  export EDITOR=vi
 fi
 
 # filename (if known), line number if known, falling back to percent if known,
