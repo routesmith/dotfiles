@@ -7,4 +7,4 @@
   default_editor = "nvim"
   chezmoi_source_dir = "~/.local/share/chezmoi" # Default source dir
   setup = "complete"
-  profile = "{{ if .profile }}{{ .profile }}{{ else }}workstation{{ end }}"
+  profile = "{{ promptString "profile" "workstation" }}"
