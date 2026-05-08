@@ -3,14 +3,6 @@
 # Command aliases
 #
 
-# Debian/Ubuntu rename `fd` and `bat` to `fdfind` and `batcat` to avoid
-# package collisions. Where the canonical name is missing but the renamed
-# binary exists, alias them back. Inert on workstations that have the
-# canonical names (e.g. via cargo or homebrew). _have is autoloaded
-# earlier in dot_zshrc, before this file is sourced.
-_have batcat && ! _have bat && alias bat=batcat
-_have fdfind && ! _have fd && alias fd=fdfind
-
 alias c=clear
 alias cat='bat --paging=never --style=header,grid'
 alias ls='ls -F --color=always'

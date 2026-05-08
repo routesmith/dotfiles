@@ -86,6 +86,24 @@ $SUDO apt-get update
 # shellcheck disable=SC2086
 $SUDO apt-get install -y $PKGS_COMMON $PKGS_EXTRA
 
+# Debian renames fd → fdfind and bat → batcat to avoid package collisions.
+# dot_zshrc uses `fd` and `bat` unconditionally (FZF_DEFAULT_COMMAND, the
+# `cat` alias). Aliases in dot_zsh/aliases work for interactive zsh but
+# *not* for subshells — fzf spawns `/bin/sh -c "$FZF_DEFAULT_COMMAND"`,
+# which can't see zsh aliases. Real binaries on PATH are required.
+case "$PROFILE" in
+  server-minimal)
+    if [ -x /usr/bin/fdfind ] && [ ! -e /usr/local/bin/fd ]; then
+      echo '==> linking /usr/local/bin/fd -> /usr/bin/fdfind'
+      $SUDO ln -s /usr/bin/fdfind /usr/local/bin/fd
+    fi
+    if [ -x /usr/bin/batcat ] && [ ! -e /usr/local/bin/bat ]; then
+      echo '==> linking /usr/local/bin/bat -> /usr/bin/batcat'
+      $SUDO ln -s /usr/bin/batcat /usr/local/bin/bat
+    fi
+    ;;
+esac
+
 mkdir -p "$HOME/.local/bin"
 if [ ! -x "$HOME/.local/bin/chezmoi" ]; then
   echo '==> installing chezmoi to ~/.local/bin (apt version may be old)'
