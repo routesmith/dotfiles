@@ -72,7 +72,12 @@ fi
 
 PKGS_COMMON="zsh git curl ca-certificates tmux"
 case "$PROFILE" in
-  server-minimal) PKGS_EXTRA="fzf zoxide ripgrep bat" ;;
+  # Debian/Ubuntu rename `fd` to `fdfind` and `bat` to `batcat` to avoid
+  # collisions with other packages. The `fd=fdfind` and `bat=batcat`
+  # aliases in dot_zsh/aliases (Debian-conditional) make these resolve
+  # by their canonical names; required because dot_zshrc uses `fd` and
+  # `bat` unconditionally (FZF_DEFAULT_COMMAND, the `cat` alias, etc.).
+  server-minimal) PKGS_EXTRA="fzf zoxide ripgrep bat fd-find" ;;
   workstation|proxmox-host) PKGS_EXTRA="" ;;
 esac
 
