@@ -20,6 +20,9 @@ Usage:
   update-restic.sh <version>      Install a specific version (e.g. 0.18.1)
   update-restic.sh --latest       Install latest via restic self-update (after install)
   update-restic.sh --where        Show restic path + version
+  update-restic.sh --check        Report installed/default-pinned versions only
+  update-restic.sh --latest --check
+                                  Report installed/latest upstream versions only
 EOF
 }
 
@@ -27,6 +30,37 @@ need() { command -v "$1" >/dev/null 2>&1 || {
     echo "Missing dependency: $1"
     exit 1
 }; }
+
+current_installed_version() {
+    if [[ -x "$BIN" ]]; then
+        "$BIN" version | awk 'NR == 1 {print $2}'
+    elif command -v restic >/dev/null 2>&1; then
+        restic version | awk 'NR == 1 {print $2}'
+    fi
+}
+
+latest_release_version() {
+    curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" |
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' |
+        head -n 1
+}
+
+report_update() {
+    local current="$1"
+    local target="$2"
+    local mode="$3"
+
+    echo "Current installed restic: ${current:-not found}"
+    echo "Target restic ($mode): $target"
+
+    if [[ "$current" == "$target" ]]; then
+        echo "No update selected: installed restic already matches target"
+        return 1
+    fi
+
+    echo "Update selected: ${current:-not found} -> $target"
+    return 0
+}
 
 install_ver() {
     local ver="$1"
@@ -63,16 +97,26 @@ main() {
 
     case "${1:-}" in
     "")
-        install_ver "${DEFAULT_VER}"
+        if report_update "$(current_installed_version || true)" "${DEFAULT_VER}" "default pin"; then
+            install_ver "${DEFAULT_VER}"
+        fi
+        ;;
+    "--check")
+        report_update "$(current_installed_version || true)" "${DEFAULT_VER}" "default pin" || true
         ;;
     "--where")
         show_where
         ;;
     "--latest")
+        if [[ "${2:-}" == "--check" ]]; then
+            report_update "$(current_installed_version || true)" "$(latest_release_version)" "latest upstream" || true
+            exit 0
+        fi
         # Ensure installed first, then use restic's own updater
         if ! command -v restic >/dev/null 2>&1; then
             install_ver "${DEFAULT_VER}"
         fi
+        report_update "$(current_installed_version || true)" "$(latest_release_version)" "latest upstream" || exit 0
         restic self-update
         restic version
         ;;
@@ -80,7 +124,13 @@ main() {
         usage
         ;;
     *)
-        install_ver "$1"
+        if [[ "${2:-}" == "--check" ]]; then
+            report_update "$(current_installed_version || true)" "$1" "explicit" || true
+            exit 0
+        fi
+        if report_update "$(current_installed_version || true)" "$1" "explicit"; then
+            install_ver "$1"
+        fi
         ;;
     esac
 }
