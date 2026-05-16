@@ -1,4 +1,12 @@
 #!/usr/bin/env zsh
+
+# Keep colon-delimited search paths unique even when later tool init scripts
+# edit PATH directly instead of using the helpers below.
+typeset -gU PATH path
+typeset -gU MANPATH manpath
+typeset -gU INFOPATH infopath
+typeset -gU CDPATH cdpath
+
 # Append to $PATH-like, unless already present.
 # If present, moves it to the end.
 # See also: prepend_to().
@@ -73,6 +81,22 @@ function prepend_to() {
   fi
 }
 
+function remove_from() {
+  emulate -L zsh
+  local TARGET=$1
+  local LOCATION=$2
+  if [[ -n "$LOCATION" ]]; then
+    case "$TARGET" in
+      PATH)
+        PATH=${PATH//":$LOCATION:"/:}
+        PATH=${PATH/#"$LOCATION:"/}
+        PATH=${PATH/%":$LOCATION"/}
+        [[ "$PATH" == "$LOCATION" ]] && PATH=
+        ;;
+    esac
+  fi
+}
+
 function os() {
     case "$(uname -s)" in
         Darwin) echo "darwin" ;;
@@ -95,6 +119,8 @@ fi
 
 if [[ "$(os)" == "linux" ]]; then
   # WSL/Linux-specific stuff
+  remove_from PATH /usr/games
+  remove_from PATH /usr/local/games
 fi
 
 append_to PATH "$HOME/.cabal/bin"
