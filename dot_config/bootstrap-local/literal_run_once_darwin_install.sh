@@ -42,6 +42,7 @@ brew install \
     uv \
     koekeishiya/formulae/skhd \
     gh \
+    go \
     --cask raycast \
     --cask claude-code \
     --cask proton-drive
