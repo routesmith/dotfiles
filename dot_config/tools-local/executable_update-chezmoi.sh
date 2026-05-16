@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build chezmoi from a local git checkout into ~/.local/bin.
+# Build chezmoi from a local git checkout into ~/go/bin.
 # Defaults to ~/src/chezmoi, matching the local source mirror.
 
 CHEZMOI_SRC="${CHEZMOI_SRC:-$HOME/src/chezmoi}"
-CHEZMOI_PREFIX="${CHEZMOI_PREFIX:-$HOME/.local}"
+CHEZMOI_BIN_DIR="${CHEZMOI_BIN_DIR:-$HOME/go/bin}"
 CHEZMOI_REPO="${CHEZMOI_REPO:-https://github.com/twpayne/chezmoi.git}"
 CHEZMOI_BRANCH="${CHEZMOI_BRANCH:-master}"
-INSTALL_TARGET="$CHEZMOI_PREFIX/bin/chezmoi"
+INSTALL_TARGET="$CHEZMOI_BIN_DIR/chezmoi"
 
 usage() {
     cat <<EOF
@@ -18,7 +18,7 @@ Usage:
 
 Environment:
   CHEZMOI_SRC=~/src/chezmoi  chezmoi git checkout
-  CHEZMOI_PREFIX=~/.local    install prefix
+  CHEZMOI_BIN_DIR=~/go/bin   install directory
   CHEZMOI_REPO=$CHEZMOI_REPO
                               clone URL when CHEZMOI_SRC is missing
   CHEZMOI_BRANCH=master      remote branch to track
