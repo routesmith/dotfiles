@@ -45,7 +45,8 @@ brew install \
     go \
     --cask raycast \
     --cask claude-code \
-    --cask proton-drive
+    --cask proton-drive \
+    --cask alt-tab
 
 echo "✅ [macOS] Homebrew packages installed."
 
