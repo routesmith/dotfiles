@@ -23,6 +23,9 @@ bootstrap-minimal.sh
 .config/tmux/
 .tmux.conf
 
+# macOS-only hotkey daemon
+.config/skhd/
+
 # Systemd
 .config/systemd/
 
@@ -61,6 +64,11 @@ bootstrap-minimal.sh
 # ~/.config misc
 .config/go
 
+{{ if ne .chezmoi.os "darwin" }}
+# macOS-only hotkey daemon
+.config/skhd/
+{{ end }}
+
 # SSH
 .ssh/id_*
 .ssh/known_hosts
@@ -88,6 +96,7 @@ bootstrap-minimal.sh
 .config/glow/
 .config/lsd/
 .config/atuin/
+.config/skhd/
 
 # Externals not fetched on this profile (defensive: if leftover state appears, ignore it)
 .config/nvim/
@@ -117,6 +126,7 @@ bootstrap-minimal.sh
 .config/glow/
 .config/lsd/
 .config/atuin/
+.config/skhd/
 
 # Externals not fetched on this profile
 .config/nvim/
