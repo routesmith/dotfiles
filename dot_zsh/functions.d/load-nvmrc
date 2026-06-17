@@ -1,0 +1,11 @@
+load-nvmrc() {
+  if [ -f .nvmrc ]; then
+    nvm use
+  elif nvm_rc_version="$(nvm version)"; [ "$nvm_rc_version" != "system" ]; then
+    nvm use default
+  fi
+}
+
+autoload -U add-zsh-hook
+add-zsh-hook chpwd load-nvmrc
+load-nvmrc

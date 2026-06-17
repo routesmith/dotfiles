@@ -1,0 +1,402 @@
+#!/usr/bin/env zsh
+
+set -u
+
+_usage() {
+    cat <<'EOF'
+Usage:
+  hermes-remote [--raw] [hermes args...]
+  hermes-remote dashboard status
+  hermes-remote dashboard start
+  hermes-remote dashboard stop
+  hermes-remote dashboard logs
+  hermes-remote dashboard tunnel
+  hermes-remote upgrade [--yes]
+  hermes-remote --gateway-start
+  hermes-remote --gateway-stop
+  hermes-remote --gateway-restart
+  hermes-remote --help
+
+Runs the Hermes CLI inside the remote Docker Compose service.
+
+Required local config, usually in ~/.zsh/exports.local:
+  HERMES_REMOTE_SSH_TARGET
+  HERMES_REMOTE_PROJECT
+  HERMES_REMOTE_BIN
+
+Optional config:
+  HERMES_REMOTE_SERVICE   default: hermes
+  HERMES_REMOTE_USER      default: 10000
+  HERMES_REMOTE_DASHBOARD_PORT default: 9119
+
+Examples:
+  hermes-remote status
+  hermes-remote doctor
+  hermes-remote tools list
+  hermes-remote sessions stats
+  hermes-remote dashboard start
+  hermes-remote upgrade
+  hermes-remote upgrade --yes
+  ssh -L 9119:127.0.0.1:9119 "$HERMES_REMOTE_SSH_TARGET"
+  hermes-remote chat -q "Reply with one short sentence."
+  hermes-remote --raw status
+EOF
+}
+
+_die() {
+    print -u2 -- "hermes-remote: $*"
+    exit 1
+}
+
+_require_config() {
+    local missing=()
+
+    [[ -n "${HERMES_REMOTE_SSH_TARGET:-}" ]] || missing+=(HERMES_REMOTE_SSH_TARGET)
+    [[ -n "${HERMES_REMOTE_PROJECT:-}" ]] || missing+=(HERMES_REMOTE_PROJECT)
+    [[ -n "${HERMES_REMOTE_BIN:-}" ]] || missing+=(HERMES_REMOTE_BIN)
+
+    if (( ${#missing[@]} > 0 )); then
+        print -u2 -- "hermes-remote: missing required config: ${missing[*]}"
+        print -u2 -- "hermes-remote: set it in ~/.zsh/exports.local or export it in the current shell."
+        exit 2
+    fi
+}
+
+_is_interactive() {
+    [[ -t 0 && -t 1 ]]
+}
+
+_remote_exec() {
+    local mode="$1"
+    shift
+
+    _require_config
+
+    local service="${HERMES_REMOTE_SERVICE:-hermes}"
+    local user="${HERMES_REMOTE_USER:-10000}"
+    local compose_tty ssh_tty
+
+    if [[ "$mode" == "tty" ]]; then
+        compose_tty="-it"
+        ssh_tty="-t"
+    else
+        compose_tty="-T"
+        ssh_tty=""
+    fi
+
+    local -a remote=(
+        docker compose
+        --project-directory "$HERMES_REMOTE_PROJECT"
+        exec "$compose_tty"
+        --user "$user"
+        "$service"
+        "$HERMES_REMOTE_BIN"
+        "$@"
+    )
+
+    local remote_cmd="${(j: :)${(q)remote[@]}}"
+
+    if [[ -n "$ssh_tty" ]]; then
+        exec ssh "$ssh_tty" "$HERMES_REMOTE_SSH_TARGET" "$remote_cmd"
+    else
+        exec ssh "$HERMES_REMOTE_SSH_TARGET" "$remote_cmd"
+    fi
+}
+
+_remote_compose_service() {
+    local action="$1"
+
+    _require_config
+
+    local service="${HERMES_REMOTE_SERVICE:-hermes}"
+    local -a remote=(
+        docker compose
+        --project-directory "$HERMES_REMOTE_PROJECT"
+        "$action"
+        "$service"
+    )
+    local remote_cmd="${(j: :)${(q)remote[@]}}"
+
+    exec ssh "$HERMES_REMOTE_SSH_TARGET" "$remote_cmd"
+}
+
+_remote_shell() {
+    local script="$1"
+
+    _require_config
+
+    ssh "$HERMES_REMOTE_SSH_TARGET" \
+        HERMES_REMOTE_PROJECT="${(q)HERMES_REMOTE_PROJECT}" \
+        HERMES_REMOTE_SERVICE="${(q)${HERMES_REMOTE_SERVICE:-hermes}}" \
+        HERMES_REMOTE_BIN="${(q)HERMES_REMOTE_BIN}" \
+        HERMES_REMOTE_USER="${(q)${HERMES_REMOTE_USER:-10000}}" \
+        HERMES_REMOTE_DASHBOARD_PORT="${(q)${HERMES_REMOTE_DASHBOARD_PORT:-9119}}" \
+        HERMES_REMOTE_SSH_TARGET="${(q)HERMES_REMOTE_SSH_TARGET}" \
+        sh -s <<EOF
+$script
+EOF
+}
+
+_dashboard_script() {
+    local action="$1"
+
+    cat <<EOF
+set -eu
+
+project="\$HERMES_REMOTE_PROJECT"
+service="\$HERMES_REMOTE_SERVICE"
+bin="\$HERMES_REMOTE_BIN"
+user="\$HERMES_REMOTE_USER"
+port="\$HERMES_REMOTE_DASHBOARD_PORT"
+target="\$HERMES_REMOTE_SSH_TARGET"
+name="hermes-dashboard-\$service"
+
+cid=\$(docker compose --project-directory "\$project" ps -q "\$service")
+if [ -z "\$cid" ]; then
+    echo "hermes-remote: service '\$service' is not running" >&2
+    exit 1
+fi
+
+published=\$(docker ps --filter "id=\$cid" --format '{{.Ports}}')
+container_ip=\$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "\$cid")
+case "\$published" in
+    *"0.0.0.0:\$port->"*|*"[::]:\$port->"*)
+        echo "hermes-remote: refusing dashboard operation: port \$port is published beyond host localhost" >&2
+        echo "hermes-remote: current ports: \$published" >&2
+        exit 1
+        ;;
+esac
+
+is_running() {
+    docker exec "\$cid" sh -lc "test -r /tmp/\$name.pid && kill -0 \\\$(cat /tmp/\$name.pid) 2>/dev/null || pgrep -f '[h]ermes dashboard' >/dev/null 2>&1"
+}
+
+case "$action" in
+    status)
+        echo "service: \$service"
+        echo "container: \$cid"
+        echo "published_ports: \${published:-none}"
+        docker exec "\$cid" sh -lc "ss -ltnp 2>/dev/null | grep \":\$port \" || netstat -ltnp 2>/dev/null | grep \":\$port \" || true"
+        docker exec "\$cid" sh -lc "ps -ef | grep '[h]ermes dashboard' || true"
+        if is_running; then
+            echo "dashboard: running"
+        else
+            echo "dashboard: not running"
+        fi
+        ;;
+    start)
+        if is_running; then
+            echo "dashboard: already running"
+        else
+            docker exec "\$cid" sh -lc "rm -f /tmp/\$name.pid /tmp/\$name.log"
+            docker exec -d --user "\$user" "\$cid" sh -lc "nohup \$bin dashboard --host 0.0.0.0 --port \$port --no-open --insecure > /tmp/\$name.log 2>&1 & echo \\\$! > /tmp/\$name.pid"
+            sleep 4
+        fi
+        docker exec "\$cid" sh -lc "ss -ltnp 2>/dev/null | grep \":\$port \" || netstat -ltnp 2>/dev/null | grep \":\$port \" || true"
+        if docker exec "\$cid" sh -lc "python3 -c 'import sys, urllib.request; sys.exit(0 if urllib.request.urlopen(\"http://127.0.0.1:'\"\$port\"'/\", timeout=2).status < 500 else 1)' >/dev/null 2>&1"; then
+            echo "dashboard: responding inside container"
+        else
+            echo "dashboard: started, but / did not respond inside container" >&2
+        fi
+        echo "access: ssh -L \$port:\$container_ip:\$port \$target"
+        ;;
+    stop)
+        if is_running; then
+            docker exec "\$cid" sh -lc "if test -r /tmp/\$name.pid; then kill \\\$(cat /tmp/\$name.pid) 2>/dev/null || true; fi; pkill -f '[h]ermes dashboard' 2>/dev/null || true; rm -f /tmp/\$name.pid"
+            echo "dashboard: stopped"
+        else
+            echo "dashboard: not running"
+        fi
+        ;;
+    logs)
+        docker exec "\$cid" sh -lc "tail -n 120 /tmp/\$name.log 2>/dev/null || true"
+        ;;
+    tunnel)
+        echo "ssh -L \$port:\$container_ip:\$port \$target"
+        ;;
+    *)
+        echo "hermes-remote: unknown dashboard action: $action" >&2
+        exit 2
+        ;;
+esac
+EOF
+}
+
+_upgrade_script() {
+    cat <<'EOF'
+set -eu
+
+project="$HERMES_REMOTE_PROJECT"
+service="$HERMES_REMOTE_SERVICE"
+bin="$HERMES_REMOTE_BIN"
+user="$HERMES_REMOTE_USER"
+
+cd "$project"
+
+echo "== Hermes Docker upgrade =="
+echo "project: $project"
+echo "service: $service"
+echo
+
+echo "== Pre-upgrade service state =="
+docker compose ps --format json "$service" || docker compose ps "$service"
+echo
+
+echo "== Pre-upgrade image identity =="
+docker image inspect nousresearch/hermes-agent:latest --format '{{.Id}} {{.RepoDigests}} {{.Created}}' 2>/dev/null || echo "image not present locally before pull"
+echo
+
+echo "== Pulling service image =="
+docker compose pull "$service"
+echo
+
+echo "== Recreating/starting service =="
+docker compose up -d "$service"
+echo
+
+echo "== Post-upgrade service state =="
+docker compose ps --format json "$service" || docker compose ps "$service"
+echo
+
+echo "== Post-upgrade image identity =="
+docker image inspect nousresearch/hermes-agent:latest --format '{{.Id}} {{.RepoDigests}} {{.Created}}'
+echo
+
+echo "== Recent Hermes logs =="
+docker compose logs --tail=120 "$service"
+echo
+
+echo "== Hermes version =="
+docker compose exec -T --user "$user" "$service" "$bin" version
+echo
+
+echo "== Hermes status =="
+docker compose exec -T --user "$user" "$service" "$bin" status
+echo
+
+echo "== Vault aperture check =="
+docker compose run --rm --user "$user" "$service" sh -lc 'id -u; test -r /vault/index.md && echo vault_index_readable; test ! -w /vault && echo vault_root_not_writable; test -w /vault/Forge && echo forge_writable; test -w /vault/wiki && echo wiki_writable; test -w /vault/index.md && echo index_writable; test -w /vault/log.md && echo log_writable; test ! -w /vault/Self && echo self_not_writable'
+EOF
+}
+
+_upgrade() {
+    local assume_yes="false"
+
+    case "${1:-}" in
+        "")
+            ;;
+        --yes|-y)
+            assume_yes="true"
+            shift
+            ;;
+        *)
+            _die "usage: hermes-remote upgrade [--yes]"
+            ;;
+    esac
+    (( $# == 0 )) || _die "usage: hermes-remote upgrade [--yes]"
+
+    if [[ "$assume_yes" != "true" ]]; then
+        if _is_interactive; then
+            print -u2 -- "hermes-remote: this will pull/recreate the remote Docker Compose Hermes service."
+            print -u2 -- "hermes-remote: it may briefly interrupt the gateway."
+            printf "Continue? [y/N] "
+            local reply
+            read -r reply
+            [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]] || exit 130
+        else
+            _die "refusing Docker upgrade without interactive confirmation; rerun with --yes"
+        fi
+    fi
+
+    _remote_shell "$(_upgrade_script)"
+}
+
+_dashboard() {
+    local action="${1:-}"
+
+    case "$action" in
+        status|start|stop|logs|tunnel)
+            _remote_shell "$(_dashboard_script "$action")"
+            ;;
+        *)
+            _die "usage: hermes-remote dashboard {status|start|stop|logs|tunnel}"
+            ;;
+    esac
+}
+
+_warn_if_mutating() {
+    local cmd="${1:-}"
+
+    case "$cmd" in
+        setup|configure|config|gateway)
+            print -u2 -- "hermes-remote: warning: '$cmd' may mutate Hermes setup/config/gateway state."
+            print -u2 -- "hermes-remote: gateway service control is explicit: --gateway-stop, --gateway-start, --gateway-restart."
+            if _is_interactive; then
+                printf "Continue? [y/N] "
+                local reply
+                read -r reply
+                [[ "$reply" == [yY] || "$reply" == [yY][eE][sS] ]] || exit 130
+            else
+                _die "refusing potentially mutating command without interactive confirmation"
+            fi
+            ;;
+    esac
+}
+
+case "${1:-}" in
+    --help|-h)
+        _usage
+        exit 0
+        ;;
+    --raw)
+        shift
+        if _is_interactive; then
+            _remote_exec tty "$@"
+        else
+            _remote_exec notty "$@"
+        fi
+        ;;
+    dashboard)
+        shift
+        _dashboard "$@"
+        exit $?
+        ;;
+    upgrade)
+        shift
+        _upgrade "$@"
+        exit $?
+        ;;
+    --gateway-start)
+        shift
+        (( $# == 0 )) || _die "--gateway-start does not accept extra arguments"
+        _remote_compose_service start
+        ;;
+    --gateway-stop)
+        shift
+        (( $# == 0 )) || _die "--gateway-stop does not accept extra arguments"
+        _remote_compose_service stop
+        ;;
+    --gateway-restart)
+        shift
+        (( $# == 0 )) || _die "--gateway-restart does not accept extra arguments"
+        _remote_compose_service restart
+        ;;
+esac
+
+if [[ "${1:-}" == "update" ]]; then
+    print -u2 -- "hermes-remote: this is a Docker-backed Hermes instance."
+    print -u2 -- "hermes-remote: 'hermes update' updates git/pip installs, not the Docker image."
+    print -u2 -- "hermes-remote: run 'hermes-remote upgrade' to pull/recreate the Compose service."
+    print -u2 -- "hermes-remote: run 'hermes-remote --raw update' only if you intentionally want the in-container updater."
+    exit 2
+fi
+
+_warn_if_mutating "${1:-}"
+
+if _is_interactive; then
+    _remote_exec tty "$@"
+else
+    _remote_exec notty "$@"
+fi
+
+# vim: set filetype=zsh

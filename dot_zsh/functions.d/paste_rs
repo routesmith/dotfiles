@@ -1,0 +1,161 @@
+# ~/.zsh/functions.d/paste_rs
+#
+# Paste sanitized text/logs to https://paste.rs/.
+#
+# Usage:
+#   command | paste_rs [--raw] [--rules FILE]
+#   paste_rs [--raw] [--rules FILE] file.log
+#
+# Sanitization is on by default. Built-in redactions cover common secret shapes;
+# an optional sed rules file can add local/project-specific redactions. The
+# default rules path is $PASTE_RS_SANITIZE_FILE or ~/.config/paste-rs/sanitize.sed.
+
+_paste_rs_usage() {
+    cat <<'EOF'
+Usage: paste_rs [options] [file]
+
+Paste stdin or file content to https://paste.rs/ and print the returned URL.
+
+Options:
+  --raw, --no-sanitize    upload input exactly as provided
+  -s, --sanitize          force sanitization (default)
+  --rules FILE            apply extra sed -E rules after built-in redactions
+  -h, --help              show this help
+
+Environment:
+  PASTE_RS_SANITIZE_FILE  default extra sed rules file
+  PASTE_RS_URL            paste.rs endpoint, defaults to https://paste.rs/
+EOF
+}
+
+_paste_rs_input() {
+    local file="$1"
+
+    if [[ "$file" == "-" ]]; then
+        cat
+    else
+        cat -- "$file"
+    fi
+}
+
+_paste_rs_builtin_sanitize() {
+    sed -E \
+        -e 's/(Authorization:[[:space:]]*(Bearer|Basic)[[:space:]]+)[^[:space:]]+/\1***/g' \
+        -e 's/((password|passwd|pwd|token|secret|api_key|apikey|api-key)[[:space:]]*[:=][[:space:]]*)[^[:space:]&]+/\1[REDACTED]/g' \
+        -e 's/((Password|Passwd|PWD|Token|TOKEN|Secret|SECRET|API_KEY|APIKEY|Api-Key)[[:space:]]*[:=][[:space:]]*)[^[:space:]&]+/\1[REDACTED]/g' \
+        -e 's/(AWS_ACCESS_KEY_ID[[:space:]]*=[[:space:]]*)[^[:space:]]+/\1[REDACTED]/g' \
+        -e 's/(AWS_SECRET_ACCESS_KEY[[:space:]]*=[[:space:]]*)[^[:space:]]+/\1[REDACTED]/g' \
+        -e 's/(-----BEGIN )[A-Z ]*(PRIVATE KEY-----)/\1REDACTED \2/g' \
+        -e 's/(-----END )[A-Z ]*(PRIVATE KEY-----)/\1REDACTED \2/g'
+}
+
+paste_rs() {
+    emulate -L zsh
+    setopt pipe_fail no_aliases
+
+    local endpoint="${PASTE_RS_URL:-https://paste.rs/}"
+    local rules_file="${PASTE_RS_SANITIZE_FILE:-$HOME/.config/paste-rs/sanitize.sed}"
+    local sanitize=1
+    local input_file="-"
+    local response body http
+
+    while (( $# > 0 )); do
+        case "$1" in
+            -h|--help)
+                _paste_rs_usage
+                return 0
+                ;;
+            --raw|--no-sanitize)
+                sanitize=0
+                shift
+                ;;
+            -s|--sanitize)
+                sanitize=1
+                shift
+                ;;
+            --rules)
+                if (( $# < 2 )); then
+                    print -u2 "paste_rs: --rules requires a file"
+                    return 2
+                fi
+                rules_file="$2"
+                sanitize=1
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                print -u2 "paste_rs: unknown option: $1"
+                print -u2 "Try: paste_rs --help"
+                return 2
+                ;;
+            *)
+                if [[ "$input_file" != "-" ]]; then
+                    print -u2 "paste_rs: expected at most one file"
+                    return 2
+                fi
+                input_file="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if (( $# > 0 )); then
+        if [[ "$input_file" != "-" || $# -gt 1 ]]; then
+            print -u2 "paste_rs: expected at most one file"
+            return 2
+        fi
+        input_file="$1"
+    fi
+
+    if [[ "$input_file" != "-" && ! -r "$input_file" ]]; then
+        print -u2 "paste_rs: cannot read file: $input_file"
+        return 1
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        print -u2 "paste_rs: curl is required"
+        return 127
+    fi
+
+    if (( sanitize )); then
+        if [[ -n "$rules_file" && -r "$rules_file" ]]; then
+            response=$(_paste_rs_input "$input_file" \
+                | _paste_rs_builtin_sanitize \
+                | sed -E -f "$rules_file" \
+                | curl -sS --data-binary @- -w $'\n%{http_code}' "$endpoint")
+        else
+            response=$(_paste_rs_input "$input_file" \
+                | _paste_rs_builtin_sanitize \
+                | curl -sS --data-binary @- -w $'\n%{http_code}' "$endpoint")
+        fi
+    else
+        response=$(_paste_rs_input "$input_file" \
+            | curl -sS --data-binary @- -w $'\n%{http_code}' "$endpoint")
+    fi
+
+    if (( $? != 0 )); then
+        print -u2 "paste_rs: upload failed"
+        return 1
+    fi
+
+    http=${response##*$'\n'}
+    body=${response%$'\n'*}
+
+    case "$http" in
+        201)
+            print -- "$body"
+            ;;
+        206)
+            print -u2 "paste_rs: warning: paste.rs accepted only a partial upload (HTTP 206)"
+            print -- "$body"
+            ;;
+        *)
+            print -u2 "paste_rs: paste.rs returned HTTP $http"
+            [[ -n "$body" ]] && print -u2 -- "$body"
+            return 1
+            ;;
+    esac
+}

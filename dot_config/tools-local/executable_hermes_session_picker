@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Hermes session picker — fzf browser for Hermes chat sessions.
+# Reads ~/.hermes/state.db directly (SQLite) for speed.
+#
+# Usage:
+#   hermes_session_picker                       # interactive fzf picker
+#   hermes_session_picker --preview ID          # print preview for session ID
+#   hermes_session_picker --print-id            # fzf, print session ID to stdout
+#   hermes_session_picker --tmux                # fzf, write session ID to /tmp/hermes-picker-resume
+#
+# Enter / Ctrl-R → resume session (or print/write ID, depending on mode)
+# Esc / Ctrl-C    → cancel, exit cleanly
+#
+# Dependencies: python3, fzf, hermes (in PATH)
+
+STATE_DB="${HERMES_STATE_DB:-$HOME/.hermes/state.db}"
+HERMES_BIN="${HERMES_BIN:-hermes}"
+SELF="${BASH_SOURCE[0]:-$0}"
+
+# Resolve hermes binary if not in PATH — check common install locations.
+_resolve_hermes() {
+    if command -v "$HERMES_BIN" >/dev/null 2>&1; then
+        return 0
+    fi
+    for candidate in "$HOME/.local/bin/hermes" "$HOME/.hermes/hermes-agent/bin/hermes" /usr/local/bin/hermes; do
+        if [[ -x "$candidate" ]]; then
+            HERMES_BIN="$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ---- dependency checks ----
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "hermes_session_picker: python3 not found" >&2
+    exit 127
+fi
+
+if [[ ! -f "$STATE_DB" ]]; then
+    echo "hermes_session_picker: no session database at $STATE_DB" >&2
+    exit 1
+fi
+
+# ---- list sessions (TSV for fzf) ----
+# Columns (tab-separated): session_id | title | when | source | msgs | model | tokens
+
+list_sessions() {
+    python3 - "$STATE_DB" <<'PYEOF'
+import sqlite3, sys, time
+
+db_path = sys.argv[1]
+db = sqlite3.connect(db_path)
+now = time.time()
+
+rows = db.execute('''
+    SELECT id, title, source, model, started_at, message_count,
+           input_tokens, output_tokens, estimated_cost_usd
+    FROM sessions
+    WHERE archived = 0
+    ORDER BY started_at DESC
+    LIMIT 500
+''').fetchall()
+
+if not rows:
+    print("(no sessions found)")
+    sys.exit(0)
+
+for r in rows:
+    sid, title, source, model, started_at, msg_count, in_tok, out_tok, cost = r
+    title = (title or sid)
+    title_display = title[:80] + "…" if len(title) > 81 else title
+
+    age_secs = now - started_at
+    if age_secs < 60:
+        when = "just now"
+    elif age_secs < 3600:
+        when = f"{int(age_secs/60)}m ago"
+    elif age_secs < 86400:
+        when = f"{int(age_secs/3600)}h ago"
+    elif age_secs < 604800:
+        when = f"{int(age_secs/86400)}d ago"
+    else:
+        when = time.strftime("%Y-%m-%d", time.localtime(started_at))
+
+    model_short = (model or "?")[:22]
+    src = (source or "?")[:6]
+    total_tok = (in_tok or 0) + (out_tok or 0)
+    if total_tok >= 1_000_000:
+        tok_str = f"{total_tok/1_000_000:.1f}M tok"
+    elif total_tok >= 1000:
+        tok_str = f"{total_tok/1000:.0f}k tok"
+    else:
+        tok_str = f"{total_tok} tok"
+
+    print(f"{sid}\t{title_display}\t{when}\t{src}\t{msg_count or 0} msgs\t{model_short}\t{tok_str}")
+PYEOF
+}
+
+# ---- preview a single session ----
+
+preview_session() {
+    local session_id="$1"
+    python3 - "$STATE_DB" "$session_id" <<'PYEOF'
+import sqlite3, sys, time
+
+db_path = sys.argv[1]
+sid = sys.argv[2]
+db = sqlite3.connect(db_path)
+
+row = db.execute('''
+    SELECT id, title, source, model, started_at, ended_at, end_reason,
+           message_count, tool_call_count,
+           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+           reasoning_tokens, estimated_cost_usd, actual_cost_usd, cost_status,
+           billing_provider
+    FROM sessions WHERE id = ?
+''', (sid,)).fetchone()
+
+if not row:
+    print(f"Session {sid} not found.")
+    sys.exit(0)
+
+(sid, title, source, model, started, ended, end_reason,
+ msg_count, tool_count,
+ in_tok, out_tok, cache_read, cache_write,
+ reasoning_tok, est_cost, actual_cost, cost_status,
+ billing_provider) = row
+
+title = title or sid
+start_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started))
+if ended:
+    end_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ended))
+    duration = int(ended - started)
+    dur_str = f"{duration//60}m {duration%60}s" if duration >= 60 else f"{duration}s"
+else:
+    end_str = "(still active)"
+    dur_str = "—"
+
+print(f"═══ {title} ═══")
+print()
+print(f"  Session ID : {sid}")
+print(f"  Started    : {start_str}")
+print(f"  Ended      : {end_str}  ({dur_str})")
+print(f"  Source     : {source or '?'}")
+print(f"  Model      : {model or '?'}")
+if billing_provider:
+    print(f"  Provider   : {billing_provider}")
+print(f"  Messages   : {msg_count or 0}  │  Tool calls: {tool_count or 0}")
+print()
+
+total = (in_tok or 0) + (out_tok or 0) + (cache_read or 0) + (cache_write or 0) + (reasoning_tok or 0)
+if total > 0:
+    print("  Tokens:")
+    print(f"    Input        {in_tok or 0:>10,}")
+    print(f"    Output       {out_tok or 0:>10,}")
+    if cache_read:
+        print(f"    Cache read   {cache_read:>10,}")
+    if cache_write:
+        print(f"    Cache write  {cache_write:>10,}")
+    if reasoning_tok:
+        print(f"    Reasoning    {reasoning_tok:>10,}")
+    print(f"    Total        {total:>10,}")
+    print()
+
+cost = actual_cost or est_cost
+if cost is not None:
+    status_note = f"  ({cost_status})" if cost_status else ""
+    print(f"  Cost       : ${cost:.4f}{status_note}")
+    print()
+
+# First user messages
+msgs = db.execute('''
+    SELECT role, content, timestamp
+    FROM messages
+    WHERE session_id = ? AND role = 'user' AND active = 1
+    ORDER BY timestamp ASC
+    LIMIT 5
+''', (sid,)).fetchall()
+
+if msgs:
+    print("─── First user messages ───")
+    print()
+    for i, (role, content, ts) in enumerate(msgs, 1):
+        if content:
+            preview = content.replace('\n', '\n       ').strip()
+            if len(preview) > 200:
+                preview = preview[:197] + "…"
+            print(f"  {i}. {preview}")
+    print()
+
+# Last assistant response (summary of outcome)
+last_msg = db.execute('''
+    SELECT role, content FROM messages
+    WHERE session_id = ? AND role = 'assistant' AND active = 1
+    ORDER BY timestamp DESC LIMIT 1
+''', (sid,)).fetchone()
+
+if last_msg and last_msg[1]:
+    content = last_msg[1].strip()
+    if len(content) > 300:
+        content = content[:297] + "…"
+    print("─── Last response ───")
+    print()
+    print(content)
+    print()
+PYEOF
+}
+
+# ---- entry point ----
+
+tmux_mode=false
+print_only=false
+
+case "${1:-}" in
+    --preview)
+        if [[ -z "${2:-}" ]]; then
+            echo "Usage: $SELF --preview <session_id>" >&2
+            exit 1
+        fi
+        preview_session "$2"
+        exit 0
+        ;;
+    --tmux)
+        tmux_mode=true
+        ;;
+    --print-id)
+        print_only=true
+        ;;
+    --help|-h)
+        echo "Usage: hermes_session_picker [--preview ID | --print-id | --tmux]"
+        echo ""
+        echo "  No args        Interactive fzf session browser; resumes on selection"
+        echo "  --preview ID   Print detailed preview for a session ID"
+        echo "  --print-id     fzf browser, prints selected session ID to stdout"
+        echo "  --tmux         fzf browser, writes selected session ID to /tmp/hermes-picker-resume"
+        echo ""
+        echo "  Enter / Ctrl-R → select and act"
+        echo "  Esc / Ctrl-C  → cancel"
+        exit 0
+        ;;
+esac
+
+# ---- interactive mode ----
+
+_resolve_hermes || {
+    echo "hermes_session_picker: hermes binary not found (checked PATH, ~/.local/bin/hermes, ~/.hermes/hermes-agent/bin/hermes)" >&2
+    exit 127
+}
+
+if ! command -v fzf >/dev/null 2>&1; then
+    echo "hermes_session_picker: fzf not found — falling back to hermes sessions browse" >&2
+    exec "$HERMES_BIN" sessions browse
+fi
+
+session_count=$(python3 -c "
+import sqlite3; db=sqlite3.connect('$STATE_DB')
+print(db.execute('SELECT COUNT(*) FROM sessions WHERE archived=0').fetchone()[0])
+" 2>/dev/null || echo "0")
+
+if [[ "$session_count" -eq 0 ]]; then
+    echo "No Hermes sessions found."
+    exit 0
+fi
+
+# ---- fzf picker ----
+
+selected=$(
+    list_sessions |
+        fzf \
+            --prompt='hermes session > ' \
+            --layout=reverse \
+            --delimiter=$'\t' \
+            --with-nth=2,3,4,5,6,7 \
+            --preview="'$SELF' --preview {1}" \
+            --preview-window='right:55%:wrap' \
+            --no-multi \
+            --header='Enter/Ctrl-R: resume   Esc: cancel'
+) || exit 0
+
+[[ -n "$selected" ]] || exit 0
+
+session_id="${selected%%$'\t'*}"
+if [[ -z "$session_id" ]]; then
+    echo "No session selected."
+    exit 0
+fi
+
+# ---- act on selection ----
+
+if $print_only; then
+    printf '%s\n' "$session_id"
+    exit 0
+fi
+
+if $tmux_mode; then
+    # Write session ID to handoff file. The tmux binding reads it and does
+    # send-keys to the original pane.
+    printf '%s\n' "$session_id" > /tmp/hermes-picker-resume
+    exit 0
+fi
+
+# Standalone mode — resume directly
+exec "$HERMES_BIN" --resume "$session_id"

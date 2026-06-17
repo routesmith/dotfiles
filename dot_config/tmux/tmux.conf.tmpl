@@ -1,0 +1,276 @@
+# ~/.config/tmux/tmux.conf
+# Purpose: Primary configuration file for tmux, defining keybindings, options, and plugin initialization
+# Docs: https://github.com/tmux/tmux/wiki
+# Help: man tmux ; https://man.openbsd.org/OpenBSD-current/man1/tmux.1
+
+# Set prefix to space.
+unbind-key C-b
+set-option -g prefix C-Space
+
+# Explicitly bind C-Space after prefix to send C-Space to the pane
+# This is necessary for nested tmux operations
+bind-key C-Space send-prefix
+
+# Bindings:
+# - to see current bindings:
+#   tmux list-keys
+
+# Open new/split panes with the path of the current pane.
+unbind-key c
+bind-key c new-window -c '#{pane_current_path}'
+unbind-key %
+bind-key % split-window -h -c '#{pane_current_path}'
+unbind-key '"'
+bind-key '"' split-window -v -c '#{pane_current_path}'
+
+# Unbind default paste buffer, to prevent unwarranted pastes
+# when fat-fingering entering copy-mode
+unbind-key ]
+
+# Vim-like key bindings for pane navigation (default uses cursor keys).
+unbind-key h
+bind-key h select-pane -L
+unbind-key j
+bind-key j select-pane -D
+unbind-key k
+bind-key k select-pane -U
+unbind-key l # normally used for last-window
+bind-key l select-pane -R
+
+# Resizing (mouse also works).
+unbind-key Left
+bind-key -r Left resize-pane -L 5
+unbind-key Right
+bind-key -r Right resize-pane -R 5
+unbind-key Down
+bind-key -r Down resize-pane -D 5
+unbind-key Up
+bind-key -r Up resize-pane -U 5
+
+# Fast toggle between current and last-used window (normally prefix-l),
+# but we're using it for vim-like pane navigation.
+bind-key ^L last-window
+
+# `^space ^space` is awfully close to the destructive `^space space`, which
+# trashes the layout. Providea quick way to get back to the previous-used
+# layout.
+#
+# Normally used for previous-window, but I never use that, prefering numeric
+# access.
+bind-key p previous-window
+
+# Intuitive window-splitting keys.
+bind-key | split-window -h -c '#{pane_current_path}' # normally prefix-%
+bind-key \\ split-window -h -c '#{pane_current_path}' # normally prefix-%
+bind-key - split-window -v -c '#{pane_current_path}' # normally prefix-"
+
+# Status bar
+set-option -g status-position top
+
+# Turn off automatically renumbering windows -- we use a deterministic layout typically
+set-option -g renumber-windows off
+
+# Controls how modified keys (keys pressed together with Control, Meta, or Shift) are reported.
+set-option -s extended-keys on
+set-option -g extended-keys-format csi-u
+
+set-option -g default-terminal "tmux-256color"
+set-option -as terminal-features ",xterm-256color:RGB,extkeys"
+set-option -ga terminal-overrides ',xterm-256color:Tc'
+
+# Mouse can be used to select panes, select windows (by clicking on the status
+# bar), resize panes, enables drag-select, and scroll buffer with mousewheel.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Mouse Behavior Overview (Wezterm + tmux + Neovim on WSL/Windows 11)
+#
+# Mouse is enabled globally: set-option -g mouse on
+# This allows pane/window selection (status bar click), resize, drag-select,
+# scroll with wheel, and copy-mode entry on scroll/drag.
+#
+# Key contexts:
+# - Plain Wezterm pane (no tmux): Wezterm handles copy/paste fully.
+# - Inside tmux: tmux intercepts most mouse events → uses internal buffers.
+# - Inside tmux + Neovim: Neovim mouse mode overrides some tmux behaviors.
+# - tmux copy-mode / buffer select: tmux owns selection/paste.
+#
+# Left Mouse:
+#   - Drag-select: Highlights. Release/Enter copies to tmux buffer + system clipboard (OSC 52).
+#     In Neovim: Neovim visual select (registers / system clipboard if unnamedplus).
+#   - Single click: Focus or cursor jump (Neovim).
+#   - Double click: Snap-select word/region → copy to clipboard (Wezterm/Neovim) or nothing (tmux).
+#
+# Middle Mouse:
+#   - Click: Pastes tmux buffer (tmux intercepts). In Neovim: pastes system clipboard.
+#     Outside tmux: pastes system clipboard.
+#   - Scroll: Enters/scrolls copy-mode (tmux), scrolls view (Neovim), or plain output.
+#
+# Right Mouse:
+#   - Click: Opens tmux menu (operations) or Wezterm context (outside tmux).
+#   - Double click: Passthrough (two clicks → menu open/close).
+#
+# Notes:
+# - Yank (y in copy-mode or mouse release) forwards to system clipboard via OSC 52.
+# - Middle mouse pastes tmux buffer (not system clipboard) when tmux is active.
+# - Ctrl+Shift+V (Wezterm) always pastes system clipboard, bypassing tmux.
+# - Nested tmux: Each level has isolated buffers; middle mouse pastes from the active (deepest) tmux.
+#
+# For Wezterm-side mouse tweaks, see ~/.config/wezterm/wezterm-wsl.lua
+# ──────────────────────────────────────────────────────────────────────────────
+
+#config.mouse_bindings = { ... }
+
+# For default bindings see `tmux list-keys`.
+set-option -g mouse on
+
+# Plain left click should only focus/select the pane.
+# This prevents the "click to focus WezTerm window and end up in tmux selection"
+# annoyance on Windows when the terminal receives the focus-click.
+bind-key -T root MouseDown1Pane select-pane -t '{mouse}'
+
+# Disable drag-selection outside copy-mode.
+# Keep mouse for pane focus, status clicks, resize, wheel scroll, etc.
+unbind-key -T root MouseDrag1Pane
+unbind-key -T root MouseDragEnd1Pane
+
+# Stay in copy mode on drag end.
+# (Would use `bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X
+# stop-selection` but it is a bit glitchy.)
+#unbind-key -T copy-mode-vi MouseDragEnd1Pane
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X stop-selection
+
+# Scroll 3 lines at a time instead of default 5; don't extend dragged selections.
+bind-key -T copy-mode-vi WheelUpPane select-pane\; send-keys -t '{mouse}' -X clear-selection\; send-keys -t '{mouse}' -X -N 3 scroll-up
+bind-key -T copy-mode-vi WheelDownPane select-pane\; send-keys -t '{mouse}' -X clear-selection\; send-keys -t '{mouse}' -X -N 3 scroll-down
+# bind -n WheelUpPane if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= '#{pane_in_mode}' 'send-keys -M' 'select-pane -t=; copy-mode -e; send-keys -M'"
+# bind -n WheelDownPane select-pane -t= \; send-keys -M
+# bind -T root WheelUpPane   if-shell -F -t = "#{alternate_on}" "send-keys -M" "select-pane -t =; copy-mode -e; send-keys -M"
+# bind -T root WheelDownPane if-shell -F -t = "#{alternate_on}" "send-keys -M" "select-pane -t =; send-keys -M"
+
+bind E command-prompt -p "Command:" \
+    "run \"tmux list-panes -s -F '##{session_name}:##{window_index}.##{pane_index}' \
+    | xargs -I PANE tmux send-keys -t PANE '%1' Enter\""
+
+# Make double and triple click work outside of copy mode (already works inside it with default bindings).
+bind-key -T root DoubleClick1Pane if-shell -Ft '{mouse}' '#{alternate_on}' "send-keys -M" "copy-mode -t{mouse}; send-keys -t '{mouse}' -X select-word"
+bind-key -T root TripleClick1Pane if-shell -Ft '{mouse}' '#{alternate_on}' "send-keys -M" "copy-mode -t{mouse}; send-keys -t '{mouse}' -X select-line"
+
+# For those times when C-c and q are not enough.
+bind-key -T copy-mode-vi Escape send-keys -X cancel
+
+# Slightly more useful width in "main-vertical" layout; enough room for 3-digit
+# line number gutter in Vim + 80 columns of text + 1 column breathing room
+# (default looks to be about 79).
+set-option -w -g main-pane-width 85
+
+set-option -g history-limit 100000
+
+# Start window and pane numbering at 1, (0 is too hard to reach).
+set-option -g base-index 1
+set-option -g pane-base-index 1
+
+# Don't wait for an escape sequence after seeing C-Space.
+set-option -s escape-time 0
+
+# Dynamically update iTerm tab and window titles.
+set-option -g set-titles on
+
+# When enabled, focus events are requested from the terminal if supported and passed through to applications running in tmux.
+set-option -g focus-events on
+
+# But don't change tmux's own window titles.
+set-option -w -g automatic-rename off
+
+# Don't wrap searches; it's super confusing given tmux's reverse-ordering of
+# position info in copy mode.
+set-option -w -g wrap-search off
+
+# - #S = session name
+# - #T = pane title (~/.zshrc sets this to the last/current command)
+set-option -g set-titles-string "#S > #T"
+
+# Show bells in window titles.
+set-option -g window-status-bell-style fg=yellow,bold,underscore
+
+# Turn off distracting border highlight.
+#set-option -ga pane-active-border-style bg=default,fg=default
+
+# Add : to the default list (" -_@") of word separators.
+set-option -ga word-separators :
+
+# Full OSC52 integration: Hermes /copy works, and OSC52-aware apps can populate tmux buffers as clipboard history.
+set -s set-clipboard on
+
+# System clipboard transport lives in a helper so direct buffer copy,
+# choose-buffer copy, fzf buffer copy, and copy-mode share one implementation.
+bind-key y run-shell "tmux save-buffer - | ~/.config/tmux/scripts/tmux-copy-to-system-clipboard.sh"
+bind-key Y choose-buffer "run-shell -b \"tmux save-buffer -b '%%' - | ~/.config/tmux/scripts/tmux-copy-to-system-clipboard.sh\""
+bind-key C-y display-popup -E -w 90% -h 80% "~/.config/tmux/scripts/tmux-buffer-fzf-copy.sh"
+
+# Wispr dictation: paste the LAST transcript into the current pane. Works in any
+# program (zsh, Neovim, the Hermes TUI) via tmux's own bracketed paste, no
+# per-app config. Manual universal fallback alongside the automatic zsh ^V /
+# Neovim <C-v> bindings. Engine: ~/.zsh/bin/wispr-last (reads Wispr's SQLite).
+bind-key v run-shell "{{ .chezmoi.homeDir }}/.zsh/bin/wispr-last --no-copy | tmux load-buffer -b wispr - && tmux paste-buffer -b wispr -p"
+
+# Hermes session fzf picker — opens in popup, resumes selected session in the
+# calling pane. Uses a temp-file handoff because #{pane_id} doesn't expand
+# inside display-popup's shell command. run-shell writes the pane id to a file
+# before launching the popup; the script writes the session id to another file;
+# run-shell reads it and send-keys to the original pane.
+bind-key C-h run-shell "echo #{pane_id} > /tmp/hermes-picker-target; tmux display-popup -E -w 90% -h 80% '~/.config/tools-local/hermes_session_picker --tmux'; if [ -s /tmp/hermes-picker-resume ]; then SID=\$(cat /tmp/hermes-picker-resume); tmux send-keys -t \$(cat /tmp/hermes-picker-target) \"hermes --resume \$SID\" Enter; rm -f /tmp/hermes-picker-resume; fi; rm -f /tmp/hermes-picker-target"
+
+{{ if eq .chezmoi.os "darwin" -}}
+bind-key -T copy-mode-vi Enter send-keys -X copy-pipe-and-cancel "~/.config/tmux/scripts/tmux-copy-to-system-clipboard.sh"
+
+{{- else if eq .chezmoi.os "linux" -}}
+{{- if contains "microsoft" .chezmoi.kernel.osrelease -}}
+bind-key -T copy-mode-vi Enter send-keys -X copy-pipe-and-cancel "~/.config/tmux/scripts/tmux-copy-to-system-clipboard.sh"
+{{- end -}}
+{{- end }}
+
+# Search back to last prompt (mnemonic: "[b]ack").
+bind-key b copy-mode\; send-keys -X start-of-line\; send-keys -X search-backward "❯"\; send-keys -X next-word
+
+bind-key -T copy-mode-vi / command-prompt -i -p "search down" "send -X search-forward-incremental \"%%%\""
+bind-key -T copy-mode-vi ? command-prompt -i -p "search up" "send -X search-backward-incremental \"%%%\""
+
+# Analagous with naked C-l which resets/clears the terminal.
+bind-key C-l clear-history
+
+# Reload tmux config and give feedback
+bind-key r source-file ~/.config/tmux/tmux.conf \; display-message "tmux.conf reloaded"
+
+# Source a local tmux configuration, if available.
+source-file -q ~/.tmux-local.conf
+
+setw    -g  mode-keys    vi
+bind-key -T edit-mode-vi Up                send-keys -X history-up
+bind-key -T edit-mode-vi Down              send-keys -X history-down
+bind-key -T copy-mode-vi v                 send      -X begin-selection
+bind-key -T copy-mode-vi [                 send-keys -X begin-selection
+#bind-key -T copy-mode-vi y                 send-keys -X copy-pipe-and-cancel "pbcopy"
+bind-key -T copy-mode-vi ]                 send-keys -X copy-selection
+
+# Reapply workflow window names from TMUX_WINDOW_MAP
+bind-key R run-shell "~/.config/tmux/scripts/tmux-assign-roles.sh"
+
+# Plugins
+set -g @plugin 'tmux-plugins/tpm'
+
+# Themes
+set -g @plugin 'z3z1ma/tmux-gruvbox'
+# set desired theme options...
+
+set -g @gruvbox_flavour 'dark'
+#set -g @gruvbox_window_default_fill "all"
+set -g @gruvbox_window_current_fill "all"
+set -g @gruvbox_window_default_text "#{window_name}"
+set -g @gruvbox_window_current_text "#{window_name}"
+set -g @gruvbox_status_modules_right "session host date_time"
+set -g @gruvbox_date_time_text "%a %l:%M %p %D"
+
+#set-option -g status-right "#[bg=colour166,bold,italics]$USER@#h #[bg=colour0]♾️☯️⚕️🐘👼🐲👽 #[bg=colour30] %a %l:%M %p %D"
+
+# Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
+run '~/.config/tmux/plugins/tpm/tpm'

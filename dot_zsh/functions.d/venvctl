@@ -1,0 +1,107 @@
+# ~/.zsh/functions.d/venvctl
+#
+# Python virtual environment manager for ~/.venvs
+# Usage:
+#   von        - Activate a virtualenv (fzf picker)
+#   voff       - Deactivate the current virtualenv
+#   vnew NAME  - Create a new virtualenv in ~/.venvs/NAME -- do this in the project directory.
+#   vremove    - Remove an existing virtualenv
+#   vlist      - List available virtualenvs
+
+# ~/.zsh/functions.d/venvctl
+#
+# Simulates virtualenvwrapper with subcommands:
+#   von       - activate a virtualenv
+#   voff      - deactivate current virtualenv
+#   vnew      - create a new virtualenv from current dir
+#   vremove   - remove a virtualenv
+#   vlist     - list all virtualenvs
+#
+# Uses ~/.venvs as the storage root.
+# Auto-activates with direnv if available.
+
+# Activate a virtualenv
+function von() {
+    local env
+    env=$(fd . "$HOME/.venvs" --max-depth 1 --min-depth 1 --type directory |
+        fzf --prompt="Virtualenv: " \
+            --preview='
+          if [ -d {} ]; then
+            ls -la --color=always {} | head -50
+          elif [ -f {} ]; then
+            bat --style=numbers --color=always --line-range=:500 {}
+          else
+            echo "Cannot preview: {}"
+          fi
+        ' \
+            --preview-window=right:50%:wrap --height=60% --layout=reverse) || return
+    source "$env/bin/activate"
+}
+
+# Deactivate the current virtualenv
+function voff() {
+    deactivate 2>/dev/null || echo "No virtualenv is currently active."
+}
+
+# Create a new virtualenv based on current directory name
+function vnew() {
+    local project_name
+    project_name=$(basename "$PWD")
+    local venv_path="$HOME/.venvs/$project_name"
+
+    if [[ -d "$venv_path" ]]; then
+        echo "Virtualenv already exists: $venv_path"
+    else
+        python3 -m venv "$venv_path" && echo "Created venv: $venv_path"
+    fi
+
+    # Enable direnv for this directory
+    if command -v direnv &>/dev/null; then
+        echo "source_env \"$venv_path/bin/activate\"" >.envrc
+        direnv allow .
+    fi
+}
+
+# Remove a virtualenv
+function vremove() {
+    local env
+    env=$(fd . "$HOME/.venvs" --max-depth 1 --min-depth 1 --type directory |
+        fzf --prompt="Delete virtualenv: " --height=30% --layout=reverse --border) || return
+    echo "Removing: $env"
+    rm -rf "$env"
+}
+
+# List virtualenvs
+function vlist() {
+    fd . "$HOME/.venvs" --max-depth 1 --min-depth 1 --type directory | sort
+}
+
+# Command dispatcher
+function venvctl() {
+    case "$1" in
+    von)
+        shift
+        von "$@"
+        ;;
+    voff)
+        shift
+        voff "$@"
+        ;;
+    vnew)
+        shift
+        vnew "$@"
+        ;;
+    vremove)
+        shift
+        vremove "$@"
+        ;;
+    vlist)
+        shift
+        vlist "$@"
+        ;;
+    *)
+        echo "Usage: venvctl {von|voff|vnew|vremove|vlist}"
+        return 1
+        ;;
+    esac
+}

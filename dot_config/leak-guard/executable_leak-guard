@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# leak-guard — block commits (or scan input) that contain local identity /
+# fingerprint leaks before they reach a repo.
+#
+# Single source of truth: it reuses the gitignored paste-rs redaction ruleset.
+# If the sanitizer would change a line, that line contains something that must
+# not be committed. The patterns live only in the gitignored rules file — this
+# tracked script never spells out what it filters.
+#
+# Modes:
+#   leak-guard --staged        scan staged blobs (git pre-commit use)
+#   leak-guard --check [FILE]   scan FILE or stdin, report leaks
+#   leak-guard --help
+#
+# Env:
+#   PASTE_RS_SANITIZE_FILE   redaction rules (default ~/.config/paste-rs/sanitize.sed)
+#   LEAK_GUARD_PATTERNS      extra grep -E deny list (default ~/.config/leak-guard/patterns.local)
+#   LEAK_GUARD_SKIP=1        bypass (escape hatch for an intentional commit)
+set -uo pipefail
+
+RULES="${PASTE_RS_SANITIZE_FILE:-$HOME/.config/paste-rs/sanitize.sed}"
+EXTRA="${LEAK_GUARD_PATTERNS:-$HOME/.config/leak-guard/patterns.local}"
+
+_sanitize() {
+  # Apply the redaction ruleset if present; otherwise pass through unchanged
+  # (fail-open on a missing ruleset, fail-closed on a detected leak).
+  if [[ -r "$RULES" ]]; then sed -E -f "$RULES"; else cat; fi
+}
+
+# Scan a stream on stdin. $1 = label for reporting. Returns 1 if a leak is found.
+_scan_stream() {
+  local label="$1" n=0 hit=0 orig san
+  while IFS= read -r orig || [[ -n "$orig" ]]; do
+    n=$((n + 1))
+    san=$(printf '%s' "$orig" | _sanitize)
+    if [[ "$san" != "$orig" ]]; then
+      printf '  %s:%d: %s\n' "$label" "$n" "$orig" >&2
+      hit=1
+    fi
+    if [[ -r "$EXTRA" ]] && printf '%s' "$orig" | grep -qE -f "$EXTRA" 2>/dev/null; then
+      printf '  %s:%d: [deny-list] %s\n' "$label" "$n" "$orig" >&2
+      hit=1
+    fi
+  done
+  return $hit
+}
+
+_scan_staged() {
+  local f leak=0 g top allow
+  # Reviewed allowlist of path globs (e.g. files of synthetic example keys).
+  # Tracked at repo root as .leakguard-allow; reveals nothing sensitive.
+  local -a allow_globs=()
+  top="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+  allow="$top/.leakguard-allow"
+  if [[ -r "$allow" ]]; then
+    while IFS= read -r g; do
+      [[ -z "$g" || "$g" == '#'* ]] && continue
+      allow_globs+=("$g")
+    done < "$allow"
+  fi
+  # Added/copied/modified staged files only.
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    local skip=0
+    for g in "${allow_globs[@]}"; do
+      # shellcheck disable=SC2053
+      if [[ "$f" == $g ]]; then
+        printf 'leak-guard: allowlisted (%s): %s\n' "$g" "$f" >&2
+        skip=1; break
+      fi
+    done
+    (( skip )) && continue
+    # Skip binary blobs (numstat reports '-' for both counts).
+    if git diff --cached --numstat -- "$f" | grep -qE '^-\s+-\s'; then continue; fi
+    if ! git show ":$f" 2>/dev/null | _scan_stream "$f"; then leak=1; fi
+  done < <(git diff --cached --name-only --diff-filter=ACM)
+
+  # Non-fatal: commit identity should be the public handle.
+  local email
+  email=$(git config user.email 2>/dev/null || true)
+  if [[ -n "$email" && "$email" != *routesmith* ]]; then
+    printf 'leak-guard: warning: commit author email is %s (expected the public handle)\n' "$email" >&2
+  fi
+  return $leak
+}
+
+case "${1:---staged}" in
+  -h|--help)
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  --check)
+    # --check FILE scans a file; --check with no arg scans stdin.
+    if [[ -n "${2:-}" ]]; then
+      if [[ ! -r "$2" ]]; then
+        printf 'leak-guard: cannot read file: %s\n' "$2" >&2
+        exit 2
+      fi
+      # Skip binary files (grep -I reports no text match on binary).
+      if ! grep -Iq . "$2" 2>/dev/null && [[ -s "$2" ]]; then exit 0; fi
+      if _scan_stream "$2" < "$2"; then exit 0; fi
+      label="$2"
+    else
+      if _scan_stream "<stdin>"; then exit 0; fi
+      label="<stdin>"
+    fi
+    printf 'leak-guard: leak detected in %s\n' "$label" >&2
+    exit 1
+    ;;
+  --staged)
+    if [[ "${LEAK_GUARD_SKIP:-0}" == 1 ]]; then
+      printf 'leak-guard: skipped (LEAK_GUARD_SKIP=1)\n' >&2
+      exit 0
+    fi
+    if ! _scan_staged; then
+      cat >&2 <<'MSG'
+leak-guard: commit blocked — staged content matches the local redaction ruleset.
+The lines above contain a username, host, vault, bot name, or secret shape that
+must not be committed. Fix options:
+  - move the value into a gitignored *.local file and reference it indirectly
+  - template the path (chezmoi {{ .chezmoi.homeDir }} / $HOME) instead of literal
+  - if this is a deliberate, safe commit: LEAK_GUARD_SKIP=1 git commit ...
+MSG
+      exit 1
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'leak-guard: unknown mode: %s (try --help)\n' "$1" >&2
+    exit 2
+    ;;
+esac

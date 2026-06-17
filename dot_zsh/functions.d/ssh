@@ -1,0 +1,18 @@
+# ~/.zsh/functions.d/ssh
+#
+# Wraps the ssh command to modify the TERM environment variable.
+# Useful for resolving display or keybinding issues when SSHing
+# into a server, especially if you're connecting from within
+# tmux or screen.
+#
+# Won't be loaded on WSL unless explicitly done, because we alias
+# ssh to ssh.exe for Windows.
+function ssh() {
+  emulate -L zsh
+
+  # Change 'tmux' or 'screen' in TERM to 'screen'
+  local LOCAL_TERM=$(echo -n "$TERM" | sed -e s/tmux/screen/ -e s/screen-256color/screen/)
+
+  # Execute the real ssh command with the modified TERM variable
+  TERM=$LOCAL_TERM command ssh "$@"
+}

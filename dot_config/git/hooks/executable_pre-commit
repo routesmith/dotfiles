@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Global pre-commit hook (installed via core.hooksPath). Runs leak-guard, then
+# chains to a repo-local hook if one exists, so per-repo hooks still work.
+set -uo pipefail
+
+# 1. Leak guard — blocks commits containing local identity/fingerprint leaks.
+if command -v leak-guard >/dev/null 2>&1; then
+  leak-guard --staged || exit 1
+elif [[ -x "$HOME/.config/leak-guard/leak-guard" ]]; then
+  "$HOME/.config/leak-guard/leak-guard" --staged || exit 1
+fi
+
+# 2. Chain to a repo-local pre-commit hook if present, so project hooks still
+#    run. Use the literal .git/hooks path — NOT `git rev-parse --git-path`,
+#    which resolves back through core.hooksPath to this global hook and would
+#    recurse. Guard against self-exec for the same reason.
+self="$(command realpath "$0" 2>/dev/null || echo "$0")"
+git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+if [[ -n "$git_dir" && -x "$git_dir/hooks/pre-commit" ]]; then
+  resolved="$(command realpath "$git_dir/hooks/pre-commit" 2>/dev/null || echo "$git_dir/hooks/pre-commit")"
+  [[ "$resolved" != "$self" ]] && exec "$git_dir/hooks/pre-commit" "$@"
+fi
+exit 0

@@ -1,0 +1,10 @@
+# Takes any arguments, feeds them to find, and opens them in $EDITOR for batch editing.
+function files() {
+  local editor="${EDITOR:-vi}"
+  if ! command -v "$editor" >/dev/null 2>&1; then
+    print -u2 "files: missing editor: $editor"
+    return 127
+  fi
+
+  find "$@" | xargs -o "$editor"
+}

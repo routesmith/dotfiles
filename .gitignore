@@ -1,0 +1,13 @@
+# Never commit Claude/AI session files
+.claude/
+CLAUDE.md
+**/.claude/**
+**/CLAUDE.md
+
+# Personal — local-only redaction rules + their fixtures (the values they hide
+# must never be tracked) and the leak-guard deny list.
+dot_zsh/exports.local
+dot_zsh/exports.local.tmpl
+dot_config/paste-rs/sanitize.sed
+dot_config/paste-rs/sanitize.test
+dot_config/leak-guard/patterns.local

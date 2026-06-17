@@ -1,0 +1,84 @@
+local wezterm = require 'wezterm'
+local mux = wezterm.mux
+local act = wezterm.action
+
+local config = wezterm.config_builder and wezterm.config_builder() or {}
+
+-- Rendering
+config.front_end = 'OpenGL'
+config.max_fps = 120
+config.webgpu_power_preference = 'HighPerformance'
+config.window_background_opacity = 0.95
+
+-- Cursor
+config.animation_fps = 120
+config.default_cursor_style = 'BlinkingBlock'
+config.cursor_blink_rate = 650
+
+-- Tab bar
+config.hide_tab_bar_if_only_one_tab = false
+config.tab_bar_at_bottom = false
+config.use_fancy_tab_bar = false
+config.tab_and_split_indices_are_zero_based = true
+
+-- Color & font
+config.color_scheme = 'GruvboxDarkHard'
+config.font = wezterm.font("JetBrainsMono NF", { weight = 'Bold', italic = false })
+config.font_size = 11
+
+-- WSL
+config.default_prog = {
+  "wsl.exe", "--distribution", "Ubuntu-24.04", "--cd", "/home/{{ .chezmoi.username }}"
+}
+config.wsl_domains = {
+  {
+    name = 'WSL:Ubuntu-24.04',
+    distribution = 'Ubuntu-24.04',
+    default_cwd = '/home/{{ .chezmoi.username }}',
+  },
+}
+
+-- Mouse copy binding
+config.mouse_bindings = {
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'NONE',
+    action = act.CompleteSelection 'Clipboard',
+  },
+}
+
+-- Keys
+config.keys = {
+  {
+    key = "t",
+    mods = "CTRL|SHIFT",
+    action = act.SpawnCommandInNewTab {
+      cwd = "/home/{{ .chezmoi.username }}",
+      args = {
+        "wsl.exe",
+        "--distribution", "Ubuntu-24.04",
+        "--cd", "/home/{{ .chezmoi.username }}",
+      },
+    },
+  },
+  {
+    key = 'Space',
+    mods = 'CTRL|SHIFT',
+    action = act.ActivateCopyMode,
+  },
+  {
+    key = 'C',
+    mods = 'CTRL|SHIFT',
+    action = act.CopyTo 'Clipboard',
+  },
+  {
+    key = 'V',
+    mods = 'CTRL|SHIFT',
+    action = act.PasteFrom 'Clipboard',
+  },
+}
+
+-- Launch menu placeholder
+config.launch_menu = {}
+
+return config

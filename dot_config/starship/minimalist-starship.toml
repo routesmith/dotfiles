@@ -1,0 +1,206 @@
+# ~/.config/starship.toml
+
+# Starship prompt style: minimal, flat, readable, and grep/search friendly
+# ~/.config/starship.toml
+
+# Starship prompt style: minimal, flat, readable, and grep/search friendly
+
+format = """
+$line_break\
+$hostname\
+$username$directory\
+$c$cpp$rust$golang$nodejs$php$java$kotlin$haskell$python\
+$git_branch$git_status\
+$docker_context$conda$pixi${custom.date}${custom.at}$time\
+$line_break$character
+"""
+
+palette = "gruvbox_dark"
+
+[palettes.gruvbox_dark]
+# Original gruvbox_dark entries
+color_fg0       = "#fbf1c7"
+color_bg1       = "#3c3836"
+color_bg3       = "#665c54"
+color_blue      = "#458588"
+color_aqua      = "#689d6a"
+color_green     = "#98971a"
+color_orange    = "#d65d0e"
+color_purple    = "#b16286"
+color_red       = "#cc241d"
+color_yellow    = "#d79921"
+
+# Additional full Gruvbox palette
+dark0_hard      = "#1d2021"
+dark0           = "#282828"
+dark0_soft      = "#32302f"
+dark1           = "#3c3836"
+dark2           = "#504945"
+dark3           = "#665c54"
+dark4           = "#7c6f64"
+gray_245        = "#928374"
+gray_244        = "#928374"
+
+light0_hard     = "#f9f5d7"
+light0          = "#fbf1c7"
+light0_soft     = "#f2e5bc"
+light1          = "#ebdbb2"
+light2          = "#d5c4a1"
+light3          = "#bdae93"
+light4          = "#a89984"
+
+bright_red      = "#fb4934"
+bright_green    = "#b8bb26"
+bright_yellow   = "#fabd2f"
+bright_blue     = "#83a598"
+bright_purple   = "#d3869b"
+bright_aqua     = "#8ec07c"
+bright_orange   = "#fe8019"
+
+neutral_red     = "#cc241d"
+neutral_green   = "#98971a"
+neutral_yellow  = "#d79921"
+neutral_blue    = "#458588"
+neutral_purple  = "#b16286"
+neutral_aqua    = "#689d6a"
+neutral_orange  = "#d65d0e"
+
+faded_red       = "#9d0006"
+faded_green     = "#79740e"
+faded_yellow    = "#b57614"
+faded_blue      = "#076678"
+faded_purple    = "#8f3f71"
+faded_aqua      = "#427b58"
+faded_orange    = "#af3a03"
+
+[username]
+show_always = true
+style_user = "fg:color_orange"
+style_root = "fg:color_red"
+format = "[$user]($style) "
+
+[directory]
+style = "fg:color_yellow"
+format = "[$path]($style) "
+truncation_length = 3
+truncation_symbol = ".../"
+
+[git_branch]
+symbol = ""
+format = "[$branch]($style) "
+style = "bg:color_blue fg:color_fg0"
+
+[git_status]
+format = "[($conflicted$staged$modified$deleted$renamed$untracked$stashed$ahead_behind)]($style)"
+style = "fg:light1 bg:black" # A subtle background to make the status block stand out slightly
+
+ahead = "↑${count}[ ](fg:bright_aqua)"
+diverged = "↑${ahead_count}[ ](fg:bright_aqua)↓${behind_count}[ ](fg:bright_purple)"
+behind = "↓${count}[ ](fg:bright_purple)"
+
+conflicted = "[CNF:$count](fg:bright_red) "
+staged = "[STG:$count](fg:bright_green) "
+modified = "[MOD:$count](fg:bright_yellow) "
+deleted = "[DEL:$count](bg: fg:neutral_red) "
+renamed = "[REN:$count](fg:bright_aqua) "
+untracked = "[UNT:$count](fg:neutral_orange) "
+stashed = "[STA:$count](fg:bright_purple) "
+
+[custom.date]
+command = "date +%a\\ %-m/%-d/%Y"
+format = "[$output]($style) "
+style = "fg:bright_green"
+when = "true"
+
+[custom.at]
+command = "echo @"
+when = true
+format = "[$output]($style) "
+style = "fg:color_purple"
+
+[time]
+disabled = false
+format = "[$time]($style)"
+style = "fg:color_blue"
+time_format = "%H:%M"
+
+# Language modules (plain text with color)
+[c]
+symbol = ""
+style = "fg:color_blue"
+format = "c:$version "
+
+[cpp]
+symbol = ""
+style = "fg:color_blue"
+format = "cpp:$version "
+
+[rust]
+symbol = ""
+style = "fg:color_red"
+format = "rust:$version "
+
+[golang]
+symbol = ""
+style = "fg:color_green"
+format = "go:$version "
+
+[nodejs]
+symbol = ""
+style = "fg:color_green"
+format = "node:$version "
+
+[php]
+symbol = ""
+style = "fg:color_purple"
+format = "php:$version "
+
+[java]
+symbol = ""
+style = "fg:color_red"
+format = "java:$version "
+
+[kotlin]
+symbol = ""
+style = "fg:color_red"
+format = "kotlin:$version "
+
+[haskell]
+symbol = ""
+style = "fg:color_purple"
+format = "hs:$version "
+
+[python]
+symbol = "P"
+style = "fg:bright_yellow bg:faded_blue"
+format = "[python:$version ($virtualenv)]($style) "
+detect_extensions = []
+detect_files = []
+detect_folders = []
+
+[docker_context]
+symbol = ""
+style = "fg:color_bg3"
+format = "docker:$context "
+
+[conda]
+style = "fg:color_bg3"
+format = "conda:$environment "
+
+[pixi]
+style = "fg:color_bg3"
+format = "pixi:$version $environment "
+
+[character]
+success_symbol = "[❯](bold fg:color_green)"
+error_symbol = "[E❯](bold fg:color_red)"
+vimcmd_symbol = "[V❯](fg:color_aqua)"
+vimcmd_replace_one_symbol = "[V❯](fg:color_purple)"
+vimcmd_replace_symbol = "[V❯](fg:color_purple)"
+vimcmd_visual_symbol = "[V❯](fg:color_yellow)"
+disabled = false
+
+[hostname]
+ssh_only = true
+format = "[ssh:$hostname]($style) "
+style = "fg:faded_purple"

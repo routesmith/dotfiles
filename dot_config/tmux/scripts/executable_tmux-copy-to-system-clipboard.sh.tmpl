@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Read UTF-8 text from stdin and copy it to the host/system clipboard using the
+# same platform transport as tmux copy-mode bindings in tmux.conf.tmpl.
+
+{{ if eq .chezmoi.os "darwin" -}}
+if command -v nc >/dev/null 2>&1; then
+    exec nc localhost 8377
+fi
+
+printf 'tmux-copy-to-system-clipboard: nc not found for localhost:8377 clipboard bridge\n' >&2
+exit 127
+{{- else if eq .chezmoi.os "linux" -}}
+{{- if contains "microsoft" .chezmoi.kernel.osrelease }}
+clip=/mnt/c/Windows/System32/clip.exe
+
+if [[ ! -x "$clip" ]]; then
+    printf 'tmux-copy-to-system-clipboard: Windows clip.exe not found at %s\n' "$clip" >&2
+    exit 127
+fi
+
+exec iconv -f UTF-8 -t UTF-16LE | "$clip"
+{{- else }}
+printf 'tmux-copy-to-system-clipboard: no Linux clipboard transport configured for this host\n' >&2
+exit 1
+{{- end }}
+{{- else }}
+printf 'tmux-copy-to-system-clipboard: unsupported OS: {{ .chezmoi.os }}\n' >&2
+exit 1
+{{- end }}

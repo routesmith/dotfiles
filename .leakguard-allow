@@ -1,0 +1,4 @@
+# leak-guard path-glob allowlist (tracked). Files listed here are skipped by the
+# pre-commit scan because they legitimately contain synthetic example secrets or
+# redaction-test fixtures. Each is a reviewed exception; keep this list minimal.
+tests/test_paste_rs.zsh

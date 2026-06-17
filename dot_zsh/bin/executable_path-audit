@@ -1,0 +1,610 @@
+#!/usr/bin/env python3
+"""Read-only PATH auditor.
+
+Surfaces PATH duplicates, missing/empty directories, symlink targets, rough
+ownership/source signals, and executable shadowing. It never mutates PATH or
+filesystem state.
+"""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import os
+import platform as platform_module
+import re
+import stat
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+@dataclass(frozen=True)
+class PathEntry:
+    index: int
+    raw: str
+    display: str
+    expanded: str
+    exists: bool
+    is_dir: bool
+    is_symlink: bool
+    link_target: str | None
+    realpath: str | None
+    empty: bool | None
+    empty_error: str | None
+    mode: int | None
+    owner: str | None
+    source: str
+    system_sources: tuple[str, ...]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Read-only PATH diagnostic: duplicates, empties, symlinks, sources, and shadowing.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  path-audit
+  path-audit git python3 nvim
+  path-audit --commands git,python3,nvim
+  path-audit --full-shadow
+  path-audit --plenary
+  path-audit --path '/tmp/a:/tmp/b' --full-shadow
+
+Modes:
+  selected commands  Report shadowing for command names supplied as args or via --commands.
+  --full-shadow      Scan every executable basename visible through PATH and report all shadows.
+  --plenary          Alias for --full-shadow; intentionally complete and potentially noisy.
+""".strip(),
+    )
+    parser.add_argument(
+        "commands",
+        nargs="*",
+        help="command names to shadow-check, e.g. git python3 nvim",
+    )
+    parser.add_argument(
+        "--commands",
+        dest="command_groups",
+        action="append",
+        default=[],
+        help="comma/space-separated command names to shadow-check; may repeat",
+    )
+    parser.add_argument(
+        "--full-shadow",
+        "--plenary",
+        dest="full_shadow",
+        action="store_true",
+        help="complete scan of all executable basename shadowing across PATH",
+    )
+    parser.add_argument(
+        "--path",
+        dest="path_value",
+        default=os.environ.get("PATH", ""),
+        help="PATH value to audit; defaults to current environment PATH",
+    )
+    parser.add_argument(
+        "--no-entries",
+        action="store_true",
+        help="omit the per-entry PATH table; useful with --full-shadow",
+    )
+    return parser.parse_args()
+
+
+def split_commands(args: argparse.Namespace) -> list[str]:
+    names: list[str] = []
+    for value in args.command_groups:
+        for token in value.replace(",", " ").split():
+            names.append(token)
+    names.extend(args.commands)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        stripped = name.strip()
+        if not stripped or stripped in seen:
+            continue
+        if "/" in stripped:
+            print(f"warning: ignoring non-command name with slash: {stripped}", file=sys.stderr)
+            continue
+        out.append(stripped)
+        seen.add(stripped)
+    return out
+
+
+def user_group_for(st: os.stat_result) -> str:
+    try:
+        import grp
+        import pwd
+
+        user = pwd.getpwuid(st.st_uid).pw_name
+        group = grp.getgrgid(st.st_gid).gr_name
+        return f"{user}:{group}"
+    except Exception:
+        return f"{st.st_uid}:{st.st_gid}"
+
+
+def classify_source(path: str, realpath: str | None) -> str:
+    candidates = [path]
+    if realpath and realpath != path:
+        candidates.append(realpath)
+
+    home = str(Path.home())
+    for p in candidates:
+        if p in (".", ""):
+            return "empty-entry/current-dir"
+        if p.startswith(home + "/.zsh") or p.startswith(home + "/.config") or p.startswith(home + "/bin"):
+            return "dotfile-managed/home-local"
+        if p.startswith(home + "/.local") or p.startswith(home + "/go"):
+            return "home-local"
+        if any(p.startswith(prefix) for prefix in (home + "/.cargo", home + "/.deno", home + "/.bun", home + "/.grok", home + "/.npm", home + "/.nvm", home + "/.volta")):
+            return "tool-init-managed"
+        if p.startswith("/opt/homebrew") or "/Homebrew/" in p or "/Cellar/" in p:
+            return "homebrew/package-managed"
+        if p.startswith("/usr/local/opt"):
+            return "package-managed"
+        if p in ("/usr/local/bin", "/usr/local/sbin") or p.startswith("/usr/local/"):
+            return "local-admin"
+        if p.startswith("/System/Cryptexes/") or p.startswith("/Library/Apple/"):
+            return "apple-managed"
+        if p.startswith("/Applications/") or p.startswith("/Library/"):
+            return "package-managed"
+        if p.startswith("/mnt/c/Windows") or p.startswith("/mnt/c/Program Files") or p.startswith("/mnt/c/Users"):
+            return "windows-bridge"
+        if p in ("/bin", "/sbin", "/usr/bin", "/usr/sbin"):
+            return "os-managed"
+        if p.startswith("/usr/lib/") or p.startswith("/usr/share/"):
+            return "package-managed"
+    return "unknown"
+
+
+WSL_WINDOWS_BRIDGE_MARKER = "__wsl_windows_bridge__"
+
+
+def system_file(system_root: Path, logical_path: str) -> Path:
+    return system_root / logical_path.lstrip("/")
+
+
+def read_text_quiet(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def add_system_source(sources: dict[str, list[str]], raw_path: str, label: str) -> None:
+    path = raw_path.strip().strip('"').strip("'")
+    if not path or path.startswith("#") or not path.startswith("/"):
+        return
+    normalized = os.path.abspath(os.path.expanduser(path))
+    if label not in sources[normalized]:
+        sources[normalized].append(label)
+
+
+def strip_inline_comment(value: str) -> str:
+    # System PATH config entries are plain paths/assignments. Treat whitespace + # as a comment.
+    return re.sub(r"\s+#.*$", "", value).strip()
+
+
+def parse_colon_path_list(value: str) -> list[str]:
+    cleaned = strip_inline_comment(value).strip().strip('"').strip("'")
+    if cleaned.startswith("PATH="):
+        cleaned = cleaned.split("=", 1)[1].strip().strip('"').strip("'")
+    return [part for part in cleaned.split(":") if part]
+
+
+def collect_line_based_paths(sources: dict[str, list[str]], file_path: Path, label: str) -> None:
+    text = read_text_quiet(file_path)
+    if text is None:
+        return
+    for line in text.splitlines():
+        cleaned = strip_inline_comment(line)
+        if cleaned:
+            add_system_source(sources, cleaned, label)
+
+
+def collect_etc_environment(sources: dict[str, list[str]], system_root: Path) -> None:
+    label = "/etc/environment"
+    text = read_text_quiet(system_file(system_root, label))
+    if text is None:
+        return
+    for line in text.splitlines():
+        cleaned = strip_inline_comment(line)
+        if not cleaned or "=" not in cleaned:
+            continue
+        key, value = cleaned.split("=", 1)
+        if key.strip() != "PATH":
+            continue
+        for part in parse_colon_path_list(value):
+            add_system_source(sources, part, label)
+
+
+def collect_login_defs(sources: dict[str, list[str]], system_root: Path) -> None:
+    label = "/etc/login.defs"
+    text = read_text_quiet(system_file(system_root, label))
+    if text is None:
+        return
+    for line in text.splitlines():
+        cleaned = strip_inline_comment(line)
+        if not cleaned or not (cleaned.startswith("ENV_PATH") or cleaned.startswith("ENV_SUPATH")):
+            continue
+        _, _, remainder = cleaned.partition("PATH=")
+        if not remainder:
+            continue
+        for part in parse_colon_path_list(remainder):
+            add_system_source(sources, part, label)
+
+
+def collect_shell_path_literals(sources: dict[str, list[str]], file_path: Path, label: str) -> None:
+    text = read_text_quiet(file_path)
+    if text is None:
+        return
+    for line in text.splitlines():
+        cleaned = strip_inline_comment(line)
+        if not cleaned or "PATH" not in cleaned and "path" not in cleaned:
+            continue
+        for raw_path in re.findall(r"/(?:[A-Za-z0-9._@%+=,-]+/?)+", cleaned):
+            add_system_source(sources, raw_path, label)
+
+
+def wsl_append_windows_path_enabled(system_root: Path) -> bool:
+    conf_path = system_file(system_root, "/etc/wsl.conf")
+    text = read_text_quiet(conf_path)
+    if text is None:
+        return True
+    parser = configparser.ConfigParser()
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        return True
+    value = parser.get("interop", "appendWindowsPath", fallback="true")
+    return value.strip().lower() not in ("0", "false", "no", "off")
+
+
+def running_under_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    version = read_text_quiet(Path("/proc/version")) or ""
+    return "microsoft" in version.lower() or "wsl" in version.lower()
+
+
+def collect_system_path_sources(
+    system_root: str | Path = "/",
+    platform_name: str | None = None,
+    is_wsl: bool | None = None,
+) -> dict[str, tuple[str, ...]]:
+    root = Path(system_root)
+    platform_key = (platform_name or platform_module.system()).lower()
+    wsl = running_under_wsl() if is_wsl is None else is_wsl
+    sources: dict[str, list[str]] = defaultdict(list)
+
+    if platform_key == "darwin":
+        collect_line_based_paths(sources, system_file(root, "/etc/paths"), "/etc/paths")
+        paths_d = system_file(root, "/etc/paths.d")
+        try:
+            path_files = sorted(p for p in paths_d.iterdir() if p.is_file())
+        except OSError:
+            path_files = []
+        for path_file in path_files:
+            collect_line_based_paths(sources, path_file, f"/etc/paths.d/{path_file.name}")
+
+    collect_etc_environment(sources, root)
+    collect_login_defs(sources, root)
+    for logical in ("/etc/profile", "/etc/bash.bashrc", "/etc/zsh/zprofile", "/etc/zsh/zshenv", "/etc/zsh/zshrc"):
+        collect_shell_path_literals(sources, system_file(root, logical), logical)
+    profile_d = system_file(root, "/etc/profile.d")
+    try:
+        profile_files = sorted(p for p in profile_d.iterdir() if p.is_file())
+    except OSError:
+        profile_files = []
+    for profile_file in profile_files:
+        collect_shell_path_literals(sources, profile_file, f"/etc/profile.d/{profile_file.name}")
+
+    if wsl and wsl_append_windows_path_enabled(root):
+        sources[WSL_WINDOWS_BRIDGE_MARKER].append("wsl:appendWindowsPath")
+
+    return {path: tuple(labels) for path, labels in sources.items()}
+
+
+def is_wsl_windows_bridge_path(path: str) -> bool:
+    parts = Path(path).parts
+    return len(parts) >= 3 and parts[1] == "mnt" and len(parts[2]) == 1 and parts[2].isalpha()
+
+
+def sources_for_entry(path: str, system_path_sources: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    labels = list(system_path_sources.get(path, ()))
+    if is_wsl_windows_bridge_path(path):
+        labels.extend(system_path_sources.get(WSL_WINDOWS_BRIDGE_MARKER, ()))
+    out: list[str] = []
+    for label in labels:
+        if label not in out:
+            out.append(label)
+    return tuple(out)
+
+
+def render_system_sources(labels: tuple[str, ...]) -> str:
+    return ",".join(labels) if labels else "-"
+
+
+def dir_is_empty(realpath: str) -> tuple[bool | None, str | None]:
+    try:
+        with os.scandir(realpath) as it:
+            for _ in it:
+                return False, None
+        return True, None
+    except Exception as exc:
+        return None, exc.__class__.__name__
+
+
+def build_entries(path_value: str, system_path_sources: dict[str, tuple[str, ...]] | None = None) -> list[PathEntry]:
+    path_sources = system_path_sources or {}
+    parts = path_value.split(":") if path_value != "" else [""]
+    entries: list[PathEntry] = []
+    for idx, raw in enumerate(parts, start=1):
+        display = raw if raw else "(empty => current directory)"
+        expanded = os.path.abspath(os.path.expanduser(raw or "."))
+        exists = os.path.exists(expanded)
+        is_dir = os.path.isdir(expanded)
+        is_symlink = os.path.islink(expanded)
+        link_target = os.readlink(expanded) if is_symlink else None
+        realpath = os.path.realpath(expanded) if exists else None
+        empty: bool | None = None
+        empty_error: str | None = None
+        mode: int | None = None
+        owner: str | None = None
+        if exists:
+            try:
+                st = os.stat(expanded)
+                mode = stat.S_IMODE(st.st_mode)
+                owner = user_group_for(st)
+            except Exception as exc:
+                owner = exc.__class__.__name__
+            if is_dir and realpath is not None:
+                empty, empty_error = dir_is_empty(realpath)
+        source = "empty-entry/current-dir" if raw == "" else classify_source(expanded, realpath)
+        system_sources = sources_for_entry(expanded, path_sources) if raw != "" else ()
+        entries.append(
+            PathEntry(
+                index=idx,
+                raw=raw,
+                display=display,
+                expanded=expanded,
+                exists=exists,
+                is_dir=is_dir,
+                is_symlink=is_symlink,
+                link_target=link_target,
+                realpath=realpath,
+                empty=empty,
+                empty_error=empty_error,
+                mode=mode,
+                owner=owner,
+                source=source,
+                system_sources=system_sources,
+            )
+        )
+    return entries
+
+
+def section(title: str) -> None:
+    print()
+    print(f"== {title} ==")
+
+
+def yes_no(value: bool | None) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "unknown"
+
+
+def render_entries(entries: list[PathEntry]) -> None:
+    section("PATH entries")
+    headers = ("idx", "state", "empty", "mode", "owner", "source", "system", "path")
+    rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+    for e in entries:
+        if not e.exists:
+            state = "missing"
+        elif not e.is_dir:
+            state = "not-dir"
+        elif e.is_symlink:
+            state = "dir-link"
+        else:
+            state = "dir"
+        mode = f"{e.mode:04o}" if e.mode is not None else "----"
+        owner = e.owner or "-"
+        source = e.source
+        suffix = ""
+        if e.is_symlink:
+            suffix += f" -> {e.link_target}"
+        if e.empty_error:
+            suffix += f" [empty-check:{e.empty_error}]"
+        rows.append((str(e.index), state, yes_no(e.empty), mode, owner, source, render_system_sources(e.system_sources), f"{e.display}{suffix}"))
+
+    widths = [len(header) for header in headers[:-1]]
+    for row in rows:
+        for idx, value in enumerate(row[:-1]):
+            widths[idx] = max(widths[idx], len(value))
+
+    print(
+        f"{headers[0]:>{widths[0]}}  "
+        f"{headers[1]:<{widths[1]}}  "
+        f"{headers[2]:<{widths[2]}}  "
+        f"{headers[3]:<{widths[3]}}  "
+        f"{headers[4]:<{widths[4]}}  "
+        f"{headers[5]:<{widths[5]}}  "
+        f"{headers[6]:<{widths[6]}}  "
+        f"{headers[7]}"
+    )
+    for row in rows:
+        print(
+            f"{row[0]:>{widths[0]}}  "
+            f"{row[1]:<{widths[1]}}  "
+            f"{row[2]:<{widths[2]}}  "
+            f"{row[3]:<{widths[3]}}  "
+            f"{row[4]:<{widths[4]}}  "
+            f"{row[5]:<{widths[5]}}  "
+            f"{row[6]:<{widths[6]}}  "
+            f"{row[7]}"
+        )
+
+
+def render_duplicates(entries: list[PathEntry]) -> None:
+    section("Duplicate PATH entries")
+    by_raw: dict[str, list[PathEntry]] = defaultdict(list)
+    for e in entries:
+        by_raw[e.raw].append(e)
+    exact = {raw: es for raw, es in by_raw.items() if len(es) > 1}
+    if not exact:
+        print("exact duplicates: none")
+    else:
+        print("exact duplicates:")
+        for raw, es in sorted(exact.items(), key=lambda item: item[1][0].index):
+            label = raw or "(empty => current directory)"
+            indexes = ",".join(str(e.index) for e in es)
+            print(f"  [{indexes}] {label}")
+
+    by_real: dict[str, list[PathEntry]] = defaultdict(list)
+    for e in entries:
+        if e.realpath and e.is_dir:
+            by_real[e.realpath].append(e)
+    real_dupes = {real: es for real, es in by_real.items() if len(es) > 1}
+    if not real_dupes:
+        print("realpath duplicates: none")
+    else:
+        print("realpath duplicates:")
+        for real, es in sorted(real_dupes.items(), key=lambda item: item[1][0].index):
+            indexes = ",".join(str(e.index) for e in es)
+            labels = "; ".join(e.display for e in es)
+            print(f"  [{indexes}] {real} <= {labels}")
+
+
+def existing_dirs(entries: Iterable[PathEntry]) -> list[PathEntry]:
+    return [e for e in entries if e.exists and e.is_dir]
+
+
+def is_executable_file(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def command_hits(name: str, dirs: list[PathEntry]) -> list[tuple[PathEntry, str, str]]:
+    hits: list[tuple[PathEntry, str, str]] = []
+    for entry in dirs:
+        candidate = os.path.join(entry.expanded, name)
+        if is_executable_file(candidate):
+            hits.append((entry, candidate, os.path.realpath(candidate)))
+    return hits
+
+
+def render_selected_commands(commands: list[str], entries: list[PathEntry]) -> None:
+    if not commands:
+        return
+    section("Selected command shadowing")
+    dirs = existing_dirs(entries)
+    for name in commands:
+        hits = command_hits(name, dirs)
+        if not hits:
+            print(f"{name}: not found")
+            continue
+        winner_entry, winner_path, winner_real = hits[0]
+        print(f"{name}: active {winner_path} [PATH #{winner_entry.index}, real {winner_real}]")
+        if len(hits) == 1:
+            print("  shadowed: none")
+            continue
+        print("  shadowed:")
+        for entry, path, real in hits[1:]:
+            print(f"    PATH #{entry.index}: {path} [real {real}]")
+
+
+def scan_full_shadow(entries: list[PathEntry]) -> dict[str, list[tuple[PathEntry, str, str]]]:
+    groups: dict[str, list[tuple[PathEntry, str, str]]] = defaultdict(list)
+    for entry in existing_dirs(entries):
+        try:
+            with os.scandir(entry.expanded) as it:
+                for child in it:
+                    try:
+                        if not child.is_file(follow_symlinks=True):
+                            continue
+                        if not os.access(child.path, os.X_OK):
+                            continue
+                    except OSError:
+                        continue
+                    groups[child.name].append((entry, child.path, os.path.realpath(child.path)))
+        except Exception as exc:
+            groups[f"<unscannable:{entry.expanded}>"] = [(entry, exc.__class__.__name__, exc.__class__.__name__)]
+
+    shadows: dict[str, list[tuple[PathEntry, str, str]]] = {}
+    for name, hits in groups.items():
+        unique_realpaths = {real for _, _, real in hits}
+        if len(hits) > 1 and (len(unique_realpaths) > 1 or len({h[0].index for h in hits}) > 1):
+            shadows[name] = hits
+    return shadows
+
+
+def render_full_shadow(entries: list[PathEntry]) -> None:
+    section("Plenary full-shadow scan")
+    shadows = scan_full_shadow(entries)
+    if not shadows:
+        print("no repeated executable basenames found across PATH")
+        return
+    print(f"shadowed executable basenames: {len(shadows)}")
+    for name in sorted(shadows):
+        hits = shadows[name]
+        first_entry, first_path, first_real = hits[0]
+        print(f"{name}: active {first_path} [PATH #{first_entry.index}, real {first_real}]")
+        for entry, path, real in hits[1:]:
+            print(f"  shadowed PATH #{entry.index}: {path} [real {real}]")
+
+
+def render_cleanup_clues(entries: list[PathEntry]) -> None:
+    section("Cleanup clues")
+    clues: list[str] = []
+    for e in entries:
+        if not e.exists:
+            if e.system_sources:
+                clues.append(
+                    f"PATH #{e.index}: system-added missing path (not usually user cleanup; {render_system_sources(e.system_sources)}): {e.display}"
+                )
+            else:
+                clues.append(f"PATH #{e.index}: missing: {e.display}")
+        elif not e.is_dir:
+            clues.append(f"PATH #{e.index}: not a directory: {e.display}")
+        elif e.empty is True:
+            clues.append(f"PATH #{e.index}: empty directory after symlink resolution: {e.display}")
+        elif e.raw == "":
+            clues.append(f"PATH #{e.index}: empty entry means current directory")
+    if not clues:
+        print("none")
+    else:
+        for clue in clues:
+            print(f"- {clue}")
+
+
+def main() -> int:
+    args = parse_args()
+    commands = split_commands(args)
+    system_path_sources = collect_system_path_sources()
+    entries = build_entries(args.path_value, system_path_sources=system_path_sources)
+
+    print("PATH audit (read-only)")
+    print(f"entries: {len(entries)}")
+    print(f"selected commands: {', '.join(commands) if commands else '(none)'}")
+    print(f"full shadow: {'yes' if args.full_shadow else 'no'}")
+
+    if not args.no_entries:
+        render_entries(entries)
+    render_duplicates(entries)
+    render_cleanup_clues(entries)
+    render_selected_commands(commands, entries)
+    if args.full_shadow:
+        render_full_shadow(entries)
+    elif not commands:
+        section("Shadowing")
+        print("pass command names (path-audit git python3) or use --full-shadow/--plenary")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,32 @@
+# ~/.gitconfig
+# Global config
+
+# Public commit identity. This MUST be set globally so no repo ever falls back
+# to an auto-derived `<user>@<host>` author. A separate forge/Gitea login name is
+# remote auth only and is unrelated to commit identity.
+[user]
+    name = Route Smith
+    email = 2595827+routesmith@users.noreply.github.com
+
+[core]
+    pager = delta
+    autocrlf = input
+    hooksPath = ~/.config/git/hooks
+
+[alias]
+    hist = log --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
+    last = log -1 HEAD
+
+[push]
+    default = simple
+
+[delta]
+    features = side-by-side line-numbers decorations
+    syntax-theme = gruvbox-dark
+    navigate = true
+    line-numbers = true
+
+[delta "decorations"]
+    commit-decoration-style = bold yellow box
+    file-style = bold yellow ul
+    hunk-header-style = line-number syntax

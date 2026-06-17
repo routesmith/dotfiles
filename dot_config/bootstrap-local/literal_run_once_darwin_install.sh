@@ -1,0 +1,62 @@
+#!/bin/bash
+set -e
+
+echo "🔧 [macOS] Installing Homebrew packages..."
+
+brew install \
+    bat \
+    chezmoi \
+    clipper \
+    delta \
+    fd \
+    git-delta \
+    lsd \
+    neovim \
+    ripgrep \
+    starship \
+    tmux \
+    tree-sitter \
+    wget \
+    zoxide \
+    direnv \
+    wezterm \
+    lazygit \
+    font-jetbrains-mono-nerd-font \
+    font-hack-nerd-font \
+    font-fira-code-nerd-font \
+    font-fira-mono-nerd-font \
+    glow \
+    tree \
+    ast-grep \
+    yazi \
+    1password-cli \
+    lftp \
+    renameutils \
+    pstree \
+    imagemagick \
+    treesitter-cli \
+    claude \
+    chatgpt \
+    codex \
+    codex-app \
+    uv \
+    koekeishiya/formulae/skhd \
+    gh \
+    go \
+    --cask raycast \
+    --cask claude-code \
+    --cask proton-drive \
+    --cask alt-tab
+
+echo "✅ [macOS] Homebrew packages installed."
+
+if command -v cargo &>/dev/null; then
+    echo "🔨 [macOS] Installing Cargo tools..."
+    cargo install \
+        atuin \
+        navi \
+        stylua
+    echo "✅ [macOS] Cargo tools installed."
+else
+    echo "🚫 [macOS] Cargo not found — skipping Rust tool installs. Run 'rustup-init'."
+fi

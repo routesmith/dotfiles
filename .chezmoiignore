@@ -1,0 +1,6 @@
+# Machine-local state from update scripts (not config)
+# Sidecar files track pre-update state for --rollback
+src/*/.prev-rev
+src/*/.prev-version
+.local/bin/.*.prev-version
+neovim/.prev-version

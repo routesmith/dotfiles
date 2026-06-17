@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""wispr-last — print Wispr Flow's last dictation transcript, and (by default)
+put it on the Windows clipboard.
+
+Why this exists: Wispr can't paste into wezterm/WSL/tmux. It auto-pastes by
+simulating Ctrl+V, but zsh's ZLE binds Ctrl+V to quoted-insert, so you get a
+literal "^" and no text (PowerShell maps Ctrl+V to paste, which is why it works
+there). The fix in .zshrc rebinds ^V to a widget that calls this script and
+inserts the real transcript, read straight from Wispr's own SQLite DB.
+
+The live DB is locked by Wispr for cross-OS WAL access (WSL's Linux sqlite can't
+join the Windows WAL/shm locking across /mnt/c), so we read a snapshot: the
+~300MB main file is cached once and only the tiny -wal/-shm are refreshed per
+call (re-cached only when Wispr checkpoints). Warm reads ~80ms.
+
+Usage:
+  wispr-last           # copy last transcript to clipboard + print it
+  wispr-last --no-copy # just print it (used by the zsh ^V widget)
+"""
+import sqlite3, shutil, os, sys, subprocess, getpass
+
+# Windows user dir under WSL. Derived at runtime so the username is not baked
+# into the tracked source; on this host the Windows and WSL usernames match.
+# Override with WIN_USER if they ever differ.
+_winuser = os.environ.get("WIN_USER") or getpass.getuser()
+SRC   = f"/mnt/c/Users/{_winuser}/AppData/Roaming/Wispr Flow/flow.sqlite"
+CACHE = os.path.expanduser("~/.cache/wispr-last")
+main  = os.path.join(CACHE, "flow.sqlite")
+sig   = os.path.join(CACHE, "main.sig")
+
+def read_last():
+    os.makedirs(CACHE, exist_ok=True)
+    st = os.stat(SRC)
+    cur = f"{st.st_size}:{st.st_mtime_ns}"
+    old = open(sig).read().strip() if os.path.exists(sig) else ""
+    if not os.path.exists(main) or cur != old:
+        shutil.copyfile(SRC, main)
+        open(sig, "w").write(cur)
+    for ext in ("-wal", "-shm"):
+        s = SRC + ext
+        if os.path.exists(s):
+            shutil.copyfile(s, main + ext)
+        elif os.path.exists(main + ext):
+            os.remove(main + ext)
+    con = sqlite3.connect(main)
+    try:
+        row = con.execute(
+            "select coalesce(nullif(editedText,''), formattedText, asrText) "
+            "from History order by timestamp desc limit 1").fetchone()
+    finally:
+        con.close()
+    return row[0] if row and row[0] else ""
+
+def main_():
+    text = read_last()
+    if not text:
+        sys.stderr.write("wispr-last: no transcript found\n")
+        return 1
+    text = text.rstrip("\r\n")   # never auto-submit a command on paste
+    if "--no-copy" not in sys.argv:
+        subprocess.run(["/mnt/c/Windows/System32/clip.exe"],
+                       input=text.encode("utf-8"), check=False)
+    sys.stdout.write(text)
+    return 0
+
+sys.exit(main_())
