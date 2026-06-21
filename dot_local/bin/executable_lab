@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# lab — establish a deterministic disposable workspace under ~/lab.
+# Convention: <vault>/AI/systems/workspace-layout.md
+#
+# Usage:
+#   lab "<description>"                       create ~/lab/<slug>--<timestamp>/, print path
+#   lab --model <id> "<description>"          ...and record the establishing model
+#   lab --touch <path> --model <id> [--note]  append a model to an existing workspace
+#   lab --verify                              self-test (create, assert, clean up)
+#
+# The slug + timestamp scheme is the deterministic part: any harness that runs
+# this script produces the same recognizable name shape. Model identity lives in
+# the LAB.md manifest, never the directory name.
+
+set -euo pipefail
+
+LAB_ROOT="${LAB_ROOT:-$HOME/lab}"
+
+slugify() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/-+/-/g; s/^-//; s/-$//'
+}
+
+iso_now() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+stamp_now() { date '+%Y%m%dT%H%M%S'; }
+
+create() {
+  local desc="$1" model="${2:-}"
+  [[ -n "$desc" ]] || { echo "lab: empty description" >&2; exit 2; }
+  local slug; slug="$(slugify "$desc")"
+  [[ -n "$slug" ]] || { echo "lab: description produced an empty slug" >&2; exit 2; }
+  local base="$LAB_ROOT/${slug}--$(stamp_now)" dir n=2
+  dir="$base"
+  while [[ -e "$dir" ]]; do dir="${base}-${n}"; n=$((n+1)); done
+  mkdir -p "$dir"
+  {
+    echo "---"
+    echo "description: $desc"
+    echo "slug: $slug"
+    echo "created: $(iso_now)"
+    echo "created_by: ${model}"
+    echo "---"
+    echo ""
+    echo "# $desc"
+    echo ""
+    echo "## Models"
+    echo "- $(iso_now) ${model:-unknown} — established"
+    echo ""
+  } > "$dir/LAB.md"
+  echo "$dir"
+}
+
+touch_lab() {
+  local path="$1" model="$2" note="${3:-touched}"
+  [[ -f "$path/LAB.md" ]] || { echo "lab: not a workspace (no LAB.md): $path" >&2; exit 2; }
+  [[ -n "$model" ]] || { echo "lab: --touch requires --model <id>" >&2; exit 2; }
+  printf -- '- %s %s — %s\n' "$(iso_now)" "$model" "$note" >> "$path/LAB.md"
+  echo "$path (+$model)"
+}
+
+verify() {
+  local d base ok=1
+  d="$(create "lab self test" "verify-bot")"
+  base="$(basename "$d")"
+  [[ "$base" =~ ^lab-self-test--[0-9]{8}T[0-9]{6}$ ]] || { echo "FAIL name pattern: $base"; ok=0; }
+  [[ -f "$d/LAB.md" ]] || { echo "FAIL no LAB.md"; ok=0; }
+  grep -q '^description: lab self test$' "$d/LAB.md" || { echo "FAIL description"; ok=0; }
+  grep -q '^created_by: verify-bot$' "$d/LAB.md"     || { echo "FAIL created_by"; ok=0; }
+  grep -q 'verify-bot — established$' "$d/LAB.md"     || { echo "FAIL establish log"; ok=0; }
+  touch_lab "$d" "critic-bot" "second-opinion" >/dev/null
+  grep -q 'critic-bot — second-opinion$' "$d/LAB.md" || { echo "FAIL --touch append"; ok=0; }
+  rm -rf "$d"
+  if [[ $ok -eq 1 ]]; then
+    echo "PASS — created $base, manifest + multi-model log verified, cleaned up"
+  else
+    echo "VERIFY FAILED" >&2; exit 1
+  fi
+}
+
+# --- arg parsing ---
+model="" cmd="create" target="" note=""
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) model="${2:-}"; shift 2;;
+    --note)  note="${2:-}"; shift 2;;
+    --touch) cmd="touch"; target="${2:-}"; shift 2;;
+    --verify) cmd="verify"; shift;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0;;
+    --) shift; while [[ $# -gt 0 ]]; do args+=("$1"); shift; done;;
+    -*) echo "lab: unknown flag: $1" >&2; exit 2;;
+    *) args+=("$1"); shift;;
+  esac
+done
+
+case "$cmd" in
+  create) create "${args[0]:-}" "$model";;
+  touch)  touch_lab "$target" "$model" "${note:-touched}";;
+  verify) verify;;
+esac
