@@ -17,7 +17,7 @@ Usage:
   wispr-last           # copy last transcript to clipboard + print it
   wispr-last --no-copy # just print it (used by the zsh ^V widget)
 """
-import sqlite3, shutil, os, sys, subprocess, getpass
+import sqlite3, shutil, os, sys, subprocess, re, getpass
 
 # Windows user dir under WSL. Derived at runtime so the username is not baked
 # into the tracked source; on this host the Windows and WSL usernames match.
@@ -57,6 +57,11 @@ def main_():
         sys.stderr.write("wispr-last: no transcript found\n")
         return 1
     text = text.rstrip("\r\n")   # never auto-submit a command on paste
+    if "--raw" not in sys.argv:
+        # Collapse embedded newlines to spaces. A pasted/inserted LF (^J) is not
+        # the terminal Enter (CR), so it lands as a literal ^J in zsh/atuin/tmux
+        # pastes. --raw keeps real \n for nvim, where nvim_paste splits lines.
+        text = re.sub(r"\s*[\r\n]+\s*", " ", text)
     if "--no-copy" not in sys.argv:
         subprocess.run(["/mnt/c/Windows/System32/clip.exe"],
                        input=text.encode("utf-8"), check=False)

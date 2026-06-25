@@ -4,3 +4,6 @@ src/*/.prev-rev
 src/*/.prev-version
 .local/bin/.*.prev-version
 neovim/.prev-version
+
+# git credential store — plaintext tokens, chezmoi must never manage/sync it
+.git-credentials

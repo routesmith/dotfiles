@@ -255,6 +255,11 @@ bind-key -T copy-mode-vi ]                 send-keys -X copy-selection
 # Reapply workflow window names from TMUX_WINDOW_MAP
 bind-key R run-shell "~/.config/tmux/scripts/tmux-assign-roles.sh"
 
+# skill-shell: fzf skill picker -> injects /skill-shell <name> into this pane.
+# run-shell wrapper expands #{pane_id} (display-popup -E does NOT) so the pick
+# is sent to the launching pane.
+bind-key C-k run-shell "tmux display-popup -w 90% -h 85% -E '~/.hermes/skills/skill-shell/scripts/pick.sh #{pane_id}'"
+
 # Plugins
 set -g @plugin 'tmux-plugins/tpm'
 

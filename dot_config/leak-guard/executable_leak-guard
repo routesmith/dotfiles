@@ -37,7 +37,9 @@ _scan_stream() {
       printf '  %s:%d: %s\n' "$label" "$n" "$orig" >&2
       hit=1
     fi
-    if [[ -r "$EXTRA" ]] && printf '%s' "$orig" | grep -qE -f "$EXTRA" 2>/dev/null; then
+    # Strip comment and blank lines from the deny list first: a blank line is an
+    # empty regex that matches every input, which would flag the whole commit.
+    if [[ -r "$EXTRA" ]] && printf '%s' "$orig" | grep -qE -f <(grep -vE '^[[:space:]]*(#|$)' "$EXTRA") 2>/dev/null; then
       printf '  %s:%d: [deny-list] %s\n' "$label" "$n" "$orig" >&2
       hit=1
     fi
