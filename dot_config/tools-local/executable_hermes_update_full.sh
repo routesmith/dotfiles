@@ -12,6 +12,13 @@ UI_DIR="$HERMES_DIR/ui-tui"
 # upstream vi-mode PR and is NOT rebased automatically.
 FEATURE_BRANCH="feat/onepassword-secrets-20260612"
 
+DRY_RUN=""
+case "${1:-}" in
+    -n|--dry-run) DRY_RUN=1 ;;
+    "") ;;
+    *) echo "usage: $(basename "$0") [-n|--dry-run]" >&2; exit 2 ;;
+esac
+
 # Reapply the feature branch and restart the gateway. Runs from a trap on
 # EXIT so it happens even if a build step below fails. `hermes update` leaves
 # the repo on vanilla main, which has NO op:// secret support — so a gateway
@@ -64,6 +71,25 @@ finalize() {
         systemctl --user status "$DASHBOARD_SERVICE" --no-pager -l | head -6
     fi
 }
+
+# Read-only preview of what a real run would do; --dry-run stops here so the
+# updater can be inspected on a host before it mutates anything.
+plan() {
+    local cur behind
+    cur=$(git -C "$HERMES_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
+    behind=$(git -C "$HERMES_DIR" rev-list --count HEAD..origin/main 2>/dev/null || echo '?')
+    echo "DRY RUN — no changes will be made."
+    echo "  repo:               $HERMES_DIR"
+    echo "  current branch:     $cur"
+    echo "  feature branch:     $FEATURE_BRANCH ($(git -C "$HERMES_DIR" show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH" && echo present || echo MISSING))"
+    echo "  behind origin/main: $behind commit(s) as of last fetch — 'hermes update' fast-forwards main, then rebases the feature branch onto it"
+    echo "  guards:"
+    echo "    npm install:        $(command -v npm >/dev/null 2>&1 && echo RUN || echo SKIP)"
+    echo "    ui-tui build:       $([ -d "$UI_DIR" ] && echo RUN || echo SKIP)"
+    echo "    dashboard restart:  $(command -v systemctl >/dev/null 2>&1 && echo RUN || echo SKIP)"
+}
+
+if [ -n "$DRY_RUN" ]; then plan; exit 0; fi
 trap finalize EXIT
 
 # npm install rewrites package-lock.json (version-dependent churn, not real
