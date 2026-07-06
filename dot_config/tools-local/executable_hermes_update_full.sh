@@ -6,11 +6,11 @@ HERMES_DIR="$HOME/.hermes/hermes-agent"
 UI_DIR="$HERMES_DIR/ui-tui"
 # Local feature branch reapplied after every update (see vault:
 # wiki/concepts/Hermes CLI Vi Mode.md). Empty string disables the step.
-# feat/onepassword-secrets-20260612 stacks the 1Password secret source
-# (upstream PR #36896) on the vi-mode commit, so one rebase carries both
-# features; the pure feat/cli-vi-mode-20260610 branch is kept for the
-# upstream vi-mode PR and is NOT rebased automatically.
-FEATURE_BRANCH="feat/onepassword-secrets-20260612"
+# 2026-07-06: 1Password (PR #36896) merged upstream, so the whole secret-source
+# stack was retired — only the vi-mode commit is still carried. vi-mode-on-upstream
+# = origin/main + the single /vim commit; it cherry-picks clean (no more 1P
+# seams). Pending the vi-mode plugin, which will retire this last carry too.
+FEATURE_BRANCH="vi-mode-on-upstream"
 
 DRY_RUN=""
 case "${1:-}" in
@@ -45,7 +45,14 @@ finalize() {
         attrs="$HERMES_DIR/.git/info/attributes"
         grep -qxF 'cli-config.yaml.example merge=union' "$attrs" 2>/dev/null \
             || echo 'cli-config.yaml.example merge=union' >> "$attrs"
-        if [ "$(git -C "$HERMES_DIR" rev-parse --abbrev-ref HEAD)" != "$FEATURE_BRANCH" ]; then
+        # Rebase whenever the feature branch is behind main OR we're parked off
+        # it. Gating on off-branch alone silently skips the rebase when `hermes
+        # update` finds main already current and returns us to the feature
+        # branch — how it drifted 169 behind while every run reported success
+        # (2026-07-05). ponytail: `git rebase main <branch>` is a no-op when
+        # already current, so behind-count is the honest trigger.
+        behind_main=$(git -C "$HERMES_DIR" rev-list --count "$FEATURE_BRANCH"..main 2>/dev/null || echo 0)
+        if [ "$behind_main" -gt 0 ] || [ "$(git -C "$HERMES_DIR" rev-parse --abbrev-ref HEAD)" != "$FEATURE_BRANCH" ]; then
             echo "==> Reapplying $FEATURE_BRANCH onto updated main..."
             if ! git -C "$HERMES_DIR" rebase main "$FEATURE_BRANCH"; then
                 git -C "$HERMES_DIR" rebase --abort
