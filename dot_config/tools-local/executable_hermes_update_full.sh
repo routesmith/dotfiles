@@ -67,7 +67,16 @@ finalize() {
         fi
     fi
     echo "==> Restarting gateway (picks up feature branch + refreshes unit)..."
-    hermes gateway restart
+    if command -v systemctl >/dev/null 2>&1; then
+        hermes gateway restart
+    else
+        # ponytail: without systemd, `hermes gateway restart` IS the gateway —
+        # it runs foreground forever, which hangs this script (and any SSH
+        # session driving it). Detach so the script can exit and the gateway
+        # survives the session.
+        nohup hermes gateway restart >> "$HOME/.hermes/logs/gateway-restart.log" 2>&1 &
+        disown
+    fi
     sleep 5
     echo "  Platforms: $(grep 'platform(s)' ~/.hermes/logs/gateway.log | tail -1)"
     # ponytail: the dashboard runs under user systemd; hosts without systemctl
