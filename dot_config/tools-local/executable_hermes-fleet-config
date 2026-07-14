@@ -32,7 +32,8 @@ AUXILIARY_TASKS = frozenset({
     "skills_hub", "title_generation", "triage_specifier", "tts_audio_tags",
     "vision", "web_extract",
 })
-REASONING_ONLY_SLOTS = frozenset({"background_review", "moa_reference", "moa_aggregator"})
+REASONING_ONLY_SLOTS = frozenset({"moa_reference", "moa_aggregator"})
+REASONING_INHERITED_SLOTS = frozenset({"background_review"})
 REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
 MANAGED_SLOT_KEYS = ("provider", "model", "fallback_chain", "extra_body", "reasoning_effort")
 POLICY_SLOT_KEYS = frozenset((*MANAGED_SLOT_KEYS, "remove_keys"))
@@ -85,7 +86,7 @@ def load_policy(path: Path) -> dict[str, Any]:
     missing = sorted(required - policy.keys())
     if missing:
         raise ValueError(f"policy missing keys: {', '.join(missing)}")
-    if policy["version"] != 2:
+    if policy["version"] != 3:
         raise ValueError("unsupported policy version")
     credential_env = policy["credential_env"]
     if not isinstance(credential_env, dict) or not all(
@@ -116,8 +117,16 @@ def load_policy(path: Path) -> dict[str, Any]:
         unknown_keys = sorted(set(route) - POLICY_SLOT_KEYS)
         if unknown_keys:
             raise ValueError(f"{label} has unknown keys: {', '.join(unknown_keys)}")
-        _validate_reasoning_effort(route.get("reasoning_effort"), label)
-        if name in REASONING_ONLY_SLOTS:
+        if name in REASONING_INHERITED_SLOTS:
+            if "reasoning_effort" in route:
+                raise ValueError(f"{label} inherits the main agent reasoning effort")
+            if route.get("remove_keys") != ["reasoning_effort"]:
+                raise ValueError(
+                    f"{label}.remove_keys must be exactly ['reasoning_effort']"
+                )
+        else:
+            _validate_reasoning_effort(route.get("reasoning_effort"), label)
+        if name in REASONING_ONLY_SLOTS | REASONING_INHERITED_SLOTS:
             routing_keys = sorted(set(route) & {"provider", "model", "fallback_chain", "extra_body"})
             if routing_keys:
                 raise ValueError(f"{label} is reasoning-only but sets: {', '.join(routing_keys)}")
@@ -428,7 +437,11 @@ def build_report(
     env_keys = sorted(env) if isinstance(env, dict) else []
     pools = _auth_pool_counts(home) if home else {}
     reasoning_slots = supported_slots if supported_reasoning_slots is None else supported_reasoning_slots
-    missing_reasoning = sorted(set(policy["auxiliary"]["slots"]) - reasoning_slots)
+    managed_reasoning_slots = {
+        name for name, route in policy["auxiliary"]["slots"].items()
+        if "reasoning_effort" in route
+    }
+    missing_reasoning = sorted(managed_reasoning_slots - reasoning_slots)
     return {
         "target": target,
         "status": "drift" if current != desired else "clean",

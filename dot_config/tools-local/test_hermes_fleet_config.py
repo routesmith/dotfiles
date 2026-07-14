@@ -27,7 +27,6 @@ EXPECTED_REASONING = {
     "triage_specifier": "low",
     "mcp": "medium",
     "kanban_decomposer": "medium",
-    "background_review": "medium",
     "moa_reference": "high",
     "moa_aggregator": "high",
 }
@@ -55,7 +54,7 @@ class ReconcilerTests(unittest.TestCase):
             "auxiliary": {
                 "compression": {"provider": "auto", "model": "", "timeout": 999},
                 "curator": {"provider": "auto", "model": "", "extra_body": {"old": True}},
-                "background_review": {"provider": "auto", "model": "", "timeout": 77},
+                "background_review": {"provider": "auto", "model": "", "timeout": 77, "reasoning_effort": "medium"},
                 "session_search": {"provider": "auto", "model": ""},
             },
             "delegation": {"provider": "", "model": "", "max_iterations": 88},
@@ -107,7 +106,7 @@ class ReconcilerTests(unittest.TestCase):
         self.assertEqual(after["auxiliary"]["background_review"]["provider"], "auto")
         self.assertEqual(after["auxiliary"]["background_review"]["model"], "")
         self.assertEqual(after["auxiliary"]["background_review"]["timeout"], 77)
-        self.assertEqual(after["auxiliary"]["background_review"]["reasoning_effort"], "medium")
+        self.assertNotIn("reasoning_effort", after["auxiliary"]["background_review"])
         self.assertNotIn("session_search", after["auxiliary"])
         self.assertEqual(after["delegation"]["max_iterations"], 88)
         self.assertEqual(after["delegation"]["provider"], "opencode-go")
@@ -317,14 +316,15 @@ class ReconcilerTests(unittest.TestCase):
         self.assertEqual(self.policy["delegation"]["reasoning_effort"], "medium")
         self.assertEqual(self.policy["fallback_providers"][1], {"provider": "nous", "model": "openai/gpt-5.6-sol"})
 
-    def test_policy_has_exact_all_16_reasoning_matrix(self):
+    def test_policy_has_exact_15_task_reasoning_matrix_plus_inherited_review(self):
         slots = self.policy["auxiliary"]["slots"]
-        self.assertEqual(self.policy["version"], 2)
-        self.assertEqual(set(slots), set(EXPECTED_REASONING))
+        self.assertEqual(self.policy["version"], 3)
+        self.assertEqual(set(slots), set(EXPECTED_REASONING) | {"background_review"})
         self.assertEqual(
-            {name: route.get("reasoning_effort") for name, route in slots.items()},
+            {name: route["reasoning_effort"] for name, route in slots.items() if "reasoning_effort" in route},
             EXPECTED_REASONING,
         )
+        self.assertEqual(slots["background_review"], {"remove_keys": ["reasoning_effort"]})
         for name in ("background_review", "moa_reference", "moa_aggregator"):
             self.assertNotIn("provider", slots[name])
             self.assertNotIn("model", slots[name])
@@ -341,6 +341,16 @@ class ReconcilerTests(unittest.TestCase):
                 path = Path(td) / "policy.json"
                 path.write_text(json.dumps(policy), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "vision.*reasoning_effort"):
+                    self.m.load_policy(path)
+
+    def test_policy_requires_background_review_inheritance_exception(self):
+        for route in ({"reasoning_effort": "medium"}, {}, {"remove_keys": []}):
+            policy = json.loads(json.dumps(self.policy))
+            policy["auxiliary"]["slots"]["background_review"] = route
+            with tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "policy.json"
+                path.write_text(json.dumps(policy), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "background_review"):
                     self.m.load_policy(path)
 
     def test_policy_rejects_explicit_reasoning_wire_override(self):
@@ -365,7 +375,7 @@ class ReconcilerTests(unittest.TestCase):
             self.m.reconcile_config(
                 config,
                 self.policy,
-                supported_slots=set(EXPECTED_REASONING),
+                supported_slots=set(self.policy["auxiliary"]["slots"]),
                 prune_retired=False,
             )
 
@@ -374,8 +384,22 @@ class ReconcilerTests(unittest.TestCase):
         self.assertNotIn("auto", providers)
         self.assertEqual(
             {key for key in self.policy["auxiliary"]["slots"]["background_review"]},
-            {"reasoning_effort"},
+            {"remove_keys"},
         )
+
+    def test_inherited_background_review_does_not_require_reasoning_capability(self):
+        supported = set(self.policy["auxiliary"]["slots"])
+        supported_reasoning = supported - {"background_review"}
+        report = self.m.build_report(
+            self.sample(),
+            self.policy,
+            target="test",
+            supported_slots=supported,
+            supported_reasoning_slots=supported_reasoning,
+            prune_retired=True,
+        )
+        self.assertTrue(report["reasoning_effort_supported"])
+        self.assertEqual(report["reasoning_effort_missing_slots"], [])
 
     def test_apply_blocks_when_runtime_lacks_reasoning_capability(self):
         with tempfile.TemporaryDirectory() as td:
@@ -383,7 +407,7 @@ class ReconcilerTests(unittest.TestCase):
             config = home / "config.yaml"
             self.m.dump_yaml(config, self.sample())
             self.write_auth(home)
-            supported = set(EXPECTED_REASONING)
+            supported = set(self.policy["auxiliary"]["slots"])
             supported_reasoning = supported - {"vision"}
             report = self.m.process_config(
                 home,

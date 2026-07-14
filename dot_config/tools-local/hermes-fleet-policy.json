@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "credential_env": {
     "opencode-go": "OPENCODE_GO_API_KEY"
   },
@@ -87,7 +87,7 @@
         "fallback_chain": [{"provider": "openai-codex", "model": "gpt-5.6-sol"}]
       },
       "background_review": {
-        "reasoning_effort": "medium"
+        "remove_keys": ["reasoning_effort"]
       },
       "moa_reference": {
         "reasoning_effort": "high"
