@@ -11,6 +11,7 @@ dot_zsh/exports.local.tmpl
 dot_config/paste-rs/sanitize.sed
 dot_config/paste-rs/sanitize.test
 dot_config/leak-guard/patterns.local
+dot_config/tools-local/private_hermes-fleet-targets.local.json
 
 # git credential store — plaintext tokens, never track even if copied into source
 .git-credentials

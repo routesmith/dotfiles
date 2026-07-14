@@ -1,0 +1,680 @@
+#!/usr/bin/env python3
+"""Report and reconcile the managed Hermes model-fleet config paths."""
+from __future__ import annotations
+
+import argparse
+import base64
+import copy
+import datetime as dt
+import difflib
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+DEFAULT_POLICY = HERE / "hermes-fleet-policy.json"
+DEFAULT_TARGETS_FILE = HERE / "hermes-fleet-targets.local.json"
+TARGETS = ("wsl", "windows", "docker", "macos")
+MANAGED_SLOT_KEYS = ("provider", "model", "fallback_chain", "extra_body")
+_SAFE_SSH_HOST = re.compile(r"^[A-Za-z0-9_.@:-]+$")
+_SAFE_REMOTE_TOKEN = re.compile(r"^[A-Za-z0-9_./:+~-]+$")
+_SENSITIVE_KEY = re.compile(r"(?:api[_-]?key|secret|password|token|credential|authorization)", re.IGNORECASE)
+
+
+def _contains_sensitive_key(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_SENSITIVE_KEY.search(str(key)) or _contains_sensitive_key(child) for key, child in value.items())
+    if isinstance(value, list):
+        return any(_contains_sensitive_key(child) for child in value)
+    return isinstance(value, str) and value.startswith("op://")
+
+
+def _validate_route(route: Any, label: str, *, require_fallback: bool) -> None:
+    if not isinstance(route, dict):
+        raise ValueError(f"{label} must be an object")
+    for key in ("provider", "model"):
+        if not isinstance(route.get(key), str) or not route[key].strip():
+            raise ValueError(f"{label} requires non-empty {key}")
+    if require_fallback:
+        chain = route.get("fallback_chain")
+        if not isinstance(chain, list) or not chain:
+            raise ValueError(f"{label} requires a non-empty fallback_chain")
+        for index, entry in enumerate(chain):
+            _validate_route(entry, f"{label}.fallback_chain[{index}]", require_fallback=False)
+    if "extra_body" in route:
+        if not isinstance(route["extra_body"], dict):
+            raise ValueError(f"{label}.extra_body must be an object")
+        if _contains_sensitive_key(route["extra_body"]):
+            raise ValueError(f"{label}.extra_body contains secret-bearing data")
+
+
+def load_policy(path: Path) -> dict[str, Any]:
+    policy = json.loads(path.read_text(encoding="utf-8"))
+    required = {
+        "version", "credential_env", "auxiliary", "delegation", "fallback_providers",
+        "retired_providers", "retired_secret_env",
+    }
+    missing = sorted(required - policy.keys())
+    if missing:
+        raise ValueError(f"policy missing keys: {', '.join(missing)}")
+    if policy["version"] != 1:
+        raise ValueError("unsupported policy version")
+    credential_env = policy["credential_env"]
+    if not isinstance(credential_env, dict) or not all(
+        isinstance(provider, str) and provider and isinstance(key, str) and key
+        for provider, key in credential_env.items()
+    ):
+        raise ValueError("credential_env must map provider names to environment keys")
+    auxiliary = policy["auxiliary"]
+    if not isinstance(auxiliary, dict):
+        raise ValueError("auxiliary must be an object")
+    retries = auxiliary.get("transient_retries")
+    if not isinstance(retries, int) or isinstance(retries, bool) or retries < 0:
+        raise ValueError("auxiliary.transient_retries must be a non-negative integer")
+    slots = auxiliary.get("slots")
+    if not isinstance(slots, dict) or not slots:
+        raise ValueError("auxiliary.slots must be a non-empty object")
+    for name, route in slots.items():
+        _validate_route(route, f"auxiliary.slots.{name}", require_fallback=True)
+    _validate_route(policy["delegation"], "delegation", require_fallback=False)
+    fallbacks = policy["fallback_providers"]
+    if not isinstance(fallbacks, list) or not fallbacks:
+        raise ValueError("fallback_providers must be a non-empty list")
+    for index, entry in enumerate(fallbacks):
+        _validate_route(entry, f"fallback_providers[{index}]", require_fallback=False)
+    for key in ("retired_providers", "retired_secret_env"):
+        if not isinstance(policy[key], list) or not all(isinstance(item, str) and item for item in policy[key]):
+            raise ValueError(f"{key} must be a list of non-empty strings")
+    return policy
+
+
+def load_targets(path: Path) -> dict[str, dict[str, str]]:
+    """Load host-local remote target details from an untracked JSON file."""
+    if not path.is_file():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    targets: dict[str, dict[str, str]] = {}
+    required = {
+        "docker": {"ssh_host", "identity_file", "compose_dir", "service", "container_user", "python"},
+        "macos": {"ssh_host", "python"},
+    }
+    for name, raw in value.items():
+        if name not in required:
+            raise ValueError(f"unsupported target in {path}: {name}")
+        if not isinstance(raw, dict):
+            raise ValueError(f"target {name} must be a JSON object")
+        missing = sorted(required[name] - raw.keys())
+        if missing:
+            raise ValueError(f"target {name} missing keys: {', '.join(missing)}")
+        target = {key: str(raw[key]) for key in required[name]}
+        if not _SAFE_SSH_HOST.fullmatch(target["ssh_host"]) or target["ssh_host"].startswith("-"):
+            raise ValueError(f"target {name} has unsafe ssh_host")
+        for key, token in target.items():
+            if key in {"ssh_host", "identity_file"}:
+                continue
+            if not _SAFE_REMOTE_TOKEN.fullmatch(token) or token.startswith("-"):
+                raise ValueError(f"target {name} has unsafe {key}")
+        targets[name] = target
+    return targets
+
+
+def _target_config(targets: dict[str, dict[str, str]], name: str) -> dict[str, str]:
+    try:
+        return targets[name]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"{name}: missing host-local target config; add it to {DEFAULT_TARGETS_FILE} "
+            "or pass --targets-file"
+        ) from exc
+
+
+def load_yaml(path: Path) -> dict[str, Any]:
+    raw = path.read_text(encoding="utf-8-sig")
+    value = yaml.safe_load(raw) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return value
+
+
+def _yaml_bytes(value: dict[str, Any]) -> bytes:
+    return yaml.safe_dump(value, default_flow_style=False, sort_keys=False, allow_unicode=True).encode("utf-8")
+
+
+def dump_yaml(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_yaml_bytes(value))
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _slot_patch(slot_policy: dict[str, Any]) -> dict[str, Any]:
+    return {key: copy.deepcopy(slot_policy[key]) for key in MANAGED_SLOT_KEYS if key in slot_policy}
+
+
+def reconcile_config(
+    config: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    supported_slots: set[str],
+    prune_retired: bool,
+) -> dict[str, Any]:
+    out = copy.deepcopy(config)
+    aux = out.setdefault("auxiliary", {})
+    if not isinstance(aux, dict):
+        raise ValueError("auxiliary must be a mapping")
+    aux["transient_retries"] = policy["auxiliary"]["transient_retries"]
+
+    unknown = sorted(set(policy["auxiliary"]["slots"]) - supported_slots)
+    if unknown:
+        raise ValueError(f"target runtime does not support auxiliary slots: {', '.join(unknown)}")
+
+    for stale in policy["auxiliary"].get("stale_slots", []):
+        aux.pop(stale, None)
+    for name, desired in policy["auxiliary"]["slots"].items():
+        current = aux.get(name)
+        if not isinstance(current, dict):
+            current = {}
+        merged = copy.deepcopy(current)
+        merged.update(_slot_patch(desired))
+        aux[name] = merged
+
+    delegation = out.setdefault("delegation", {})
+    if not isinstance(delegation, dict):
+        raise ValueError("delegation must be a mapping")
+    delegation.update(copy.deepcopy(policy["delegation"]))
+    out["fallback_providers"] = copy.deepcopy(policy["fallback_providers"])
+    out.pop("fallback_model", None)
+
+    if prune_retired:
+        retired = set(policy["retired_providers"])
+        providers = out.get("custom_providers")
+        if isinstance(providers, list):
+            out["custom_providers"] = [
+                item for item in providers
+                if not (isinstance(item, dict) and item.get("name") in retired)
+            ]
+        env = (((out.get("secrets") or {}).get("onepassword") or {}).get("env"))
+        if isinstance(env, dict):
+            for key in policy["retired_secret_env"]:
+                env.pop(key, None)
+    return out
+
+
+def managed_projection(config: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    aux = config.get("auxiliary") if isinstance(config.get("auxiliary"), dict) else {}
+    slots: dict[str, Any] = {}
+    for name, desired in policy["auxiliary"]["slots"].items():
+        current = aux.get(name) if isinstance(aux.get(name), dict) else {}
+        slots[name] = {key: copy.deepcopy(current.get(key)) for key in _slot_patch(desired)}
+    providers = config.get("custom_providers") if isinstance(config.get("custom_providers"), list) else []
+    env = (((config.get("secrets") or {}).get("onepassword") or {}).get("env"))
+    return {
+        "auxiliary": {
+            "transient_retries": aux.get("transient_retries"),
+            "slots": slots,
+            "stale_slots_present": sorted(x for x in policy["auxiliary"].get("stale_slots", []) if x in aux),
+        },
+        "delegation": {key: (config.get("delegation") or {}).get(key) for key in policy["delegation"]},
+        "fallback_providers": copy.deepcopy(config.get("fallback_providers")),
+        "fallback_model_present": "fallback_model" in config,
+        "retired_provider_names_present": sorted(
+            item.get("name") for item in providers
+            if isinstance(item, dict) and item.get("name") in set(policy["retired_providers"])
+        ),
+        "retired_secret_env_present": sorted(
+            key for key in policy["retired_secret_env"] if isinstance(env, dict) and key in env
+        ),
+    }
+
+
+def unmanaged_projection(config: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    out = copy.deepcopy(config)
+    aux = out.get("auxiliary")
+    if isinstance(aux, dict):
+        aux.pop("transient_retries", None)
+        for stale in policy["auxiliary"].get("stale_slots", []):
+            aux.pop(stale, None)
+        for name, desired in policy["auxiliary"]["slots"].items():
+            current = aux.get(name)
+            if isinstance(current, dict):
+                for key in _slot_patch(desired):
+                    current.pop(key, None)
+                if not current:
+                    aux.pop(name, None)
+    delegation = out.get("delegation")
+    if isinstance(delegation, dict):
+        for key in policy["delegation"]:
+            delegation.pop(key, None)
+    out.pop("fallback_providers", None)
+    out.pop("fallback_model", None)
+    retired = set(policy["retired_providers"])
+    providers = out.get("custom_providers")
+    if isinstance(providers, list):
+        out["custom_providers"] = [
+            item for item in providers
+            if not (isinstance(item, dict) and item.get("name") in retired)
+        ]
+    env = (((out.get("secrets") or {}).get("onepassword") or {}).get("env"))
+    if isinstance(env, dict):
+        for key in policy["retired_secret_env"]:
+            env.pop(key, None)
+    return out
+
+
+def _redact_report_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if _SENSITIVE_KEY.search(str(key)) else _redact_report_value(child)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_report_value(child) for child in value]
+    if isinstance(value, str) and value.startswith("op://"):
+        return "[REDACTED]"
+    return value
+
+
+def _diff(before: dict[str, Any], after: dict[str, Any]) -> str:
+    left = json.dumps(before, indent=2, sort_keys=True).splitlines()
+    right = json.dumps(after, indent=2, sort_keys=True).splitlines()
+    return "\n".join(difflib.unified_diff(left, right, fromfile="current", tofile="desired", lineterm=""))
+
+
+def _auth_pool_counts(home: Path) -> dict[str, int]:
+    path = home / "auth.json"
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    pools = data.get("credential_pool") if isinstance(data, dict) else None
+    if not isinstance(pools, dict):
+        return {}
+    return dict(sorted(
+        (provider, len(entries))
+        for provider, entries in pools.items()
+        if isinstance(provider, str) and isinstance(entries, list)
+    ))
+
+
+def _required_providers(policy: dict[str, Any]) -> set[str]:
+    providers = {policy["delegation"]["provider"]}
+    for slot in policy["auxiliary"]["slots"].values():
+        providers.add(slot["provider"])
+        providers.update(entry["provider"] for entry in slot.get("fallback_chain", []))
+    providers.update(entry["provider"] for entry in policy["fallback_providers"])
+    return providers
+
+
+def _missing_credentials(policy: dict[str, Any], pools: dict[str, int], env_keys: list[str]) -> list[str]:
+    env_provider_keys = policy["credential_env"]
+    return sorted(
+        provider for provider in _required_providers(policy)
+        if pools.get(provider, 0) < 1 and env_provider_keys.get(provider) not in env_keys
+    )
+
+
+def build_report(
+    config: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    target: str,
+    supported_slots: set[str],
+    prune_retired: bool,
+    home: Path | None = None,
+    latest_config_version: int | None = None,
+) -> dict[str, Any]:
+    candidate = reconcile_config(config, policy, supported_slots=supported_slots, prune_retired=prune_retired)
+    current = managed_projection(config, policy)
+    desired = managed_projection(candidate, policy)
+    report_current = _redact_report_value(current)
+    report_desired = _redact_report_value(desired)
+    schema = config.get("_config_version")
+    env = (((config.get("secrets") or {}).get("onepassword") or {}).get("env"))
+    env_keys = sorted(env) if isinstance(env, dict) else []
+    pools = _auth_pool_counts(home) if home else {}
+    return {
+        "target": target,
+        "status": "drift" if current != desired else "clean",
+        "config_version": schema,
+        "latest_config_version": latest_config_version,
+        "schema_current": latest_config_version is None or schema == latest_config_version,
+        "supported_slots": sorted(supported_slots),
+        "credential_pool_counts": pools,
+        "onepassword_env_keys": env_keys,
+        "missing_credentials": _missing_credentials(policy, pools, env_keys) if home else [],
+        "current": report_current,
+        "desired": report_desired,
+        "diff": _diff(report_current, report_desired),
+    }
+
+
+def _write_bytes_atomic(path: Path, data: bytes, mode: int) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        file_obj = os.fdopen(fd, "wb")
+        fd = -1
+        with file_obj as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_name, mode)
+        os.replace(tmp_name, path)
+        if os.name != "nt":
+            dir_fd = os.open(path.parent, os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+
+
+def _write_atomic(path: Path, value: dict[str, Any], mode: int) -> None:
+    _write_bytes_atomic(path, _yaml_bytes(value), mode)
+
+
+def _restore_backup_atomic(backup: Path, config_path: Path, mode: int) -> None:
+    expected = sha256_file(backup)
+    _write_bytes_atomic(config_path, backup.read_bytes(), mode)
+    if sha256_file(config_path) != expected:
+        raise RuntimeError("atomic rollback verification failed")
+
+
+def process_config(
+    home: Path,
+    policy: dict[str, Any],
+    *,
+    apply: bool,
+    dry_run: bool,
+    prune_retired: bool,
+    expected_hash: str | None,
+    supported_slots: set[str],
+    latest_config_version: int | None = None,
+    target: str = "local",
+) -> dict[str, Any]:
+    config_path = home / "config.yaml"
+    observed_hash = sha256_file(config_path)
+    before = load_yaml(config_path)
+    report = build_report(
+        before, policy, target=target, supported_slots=supported_slots,
+        prune_retired=prune_retired, home=home, latest_config_version=latest_config_version,
+    )
+    report.update({
+        "changed": report["status"] == "drift",
+        "backup_path": None,
+        "applied": False,
+        "audited_hash": observed_hash,
+        "expected_hash": expected_hash,
+    })
+    if not apply or dry_run or not report["changed"]:
+        return report
+    if latest_config_version is not None and before.get("_config_version") != latest_config_version:
+        raise RuntimeError(f"config schema {before.get('_config_version')} is behind target runtime {latest_config_version}")
+    if expected_hash is None:
+        raise RuntimeError("apply requires expected hash from report")
+    if expected_hash != observed_hash or sha256_file(config_path) != observed_hash:
+        raise RuntimeError("config.yaml changed since audit; refusing apply")
+    if report["missing_credentials"]:
+        raise RuntimeError("missing credentials: " + ", ".join(report["missing_credentials"]))
+
+    candidate = reconcile_config(before, policy, supported_slots=supported_slots, prune_retired=prune_retired)
+    before_unmanaged = unmanaged_projection(before, policy)
+    sidecars = {name: sha256_file(home / name) for name in (".env", "auth.json") if (home / name).is_file()}
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = home / "backups" / f"hermes-reconcile-{stamp}"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(backup_dir, 0o700)
+    backup = backup_dir / "config.yaml"
+    shutil.copy2(config_path, backup)
+    mode = stat.S_IMODE(config_path.stat().st_mode)
+    _write_atomic(config_path, candidate, mode)
+
+    persisted = load_yaml(config_path)
+    if managed_projection(persisted, policy) != managed_projection(candidate, policy):
+        _restore_backup_atomic(backup, config_path, mode)
+        raise RuntimeError("managed-path verification failed; backup restored atomically")
+    if unmanaged_projection(persisted, policy) != before_unmanaged:
+        _restore_backup_atomic(backup, config_path, mode)
+        raise RuntimeError("unmanaged config changed; backup restored atomically")
+    for name, digest in sidecars.items():
+        if sha256_file(home / name) != digest:
+            _restore_backup_atomic(backup, config_path, mode)
+            raise RuntimeError(f"{name} changed unexpectedly; config backup restored atomically")
+
+    report.update({"backup_path": str(backup), "applied": True, "persisted_hash": sha256_file(config_path)})
+    return report
+
+
+def target_python(home: Path) -> str:
+    candidate = home / "hermes-agent" / "venv" / "bin" / "python3"
+    return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else sys.executable
+
+
+def _runtime_schema() -> tuple[int | None, set[str]]:
+    from hermes_cli.config import DEFAULT_CONFIG
+    aux = DEFAULT_CONFIG.get("auxiliary") or {}
+    return DEFAULT_CONFIG.get("_config_version"), {key for key, value in aux.items() if isinstance(value, dict)}
+
+
+def _resolve_home(target: str) -> Path:
+    if target == "windows":
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if not localappdata:
+            raise RuntimeError("windows worker requires LOCALAPPDATA")
+        return Path(localappdata) / "hermes"
+    if target == "docker":
+        return Path("/opt/data")
+    return Path.home() / ".hermes"
+
+
+def _worker(payload: dict[str, Any]) -> dict[str, Any]:
+    target = payload["target"]
+    home = Path(payload["home"]) if payload.get("home") else _resolve_home(target)
+    policy = payload["policy"]
+    latest, slots = _runtime_schema()
+    return process_config(
+        home, policy,
+        apply=payload.get("apply", False),
+        dry_run=payload.get("dry_run", False),
+        prune_retired=payload.get("prune_retired", False),
+        expected_hash=payload.get("expected_hash"),
+        supported_slots=slots,
+        latest_config_version=latest,
+        target=target,
+    )
+
+
+def _run(command: list[str], *, input_text: str | None = None, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, input=input_text, text=True, capture_output=True, timeout=timeout, check=False)
+
+
+def _decode_result(proc: subprocess.CompletedProcess[str], target: str) -> dict[str, Any]:
+    if proc.returncode != 0:
+        raise RuntimeError(f"{target}: worker failed ({proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}")
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    for line in reversed(lines):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise RuntimeError(f"{target}: worker returned no JSON")
+
+
+def _payload_b64(target: str, policy: dict[str, Any], args: argparse.Namespace, *, apply: bool) -> str:
+    payload = {
+        "target": target,
+        "policy": policy,
+        "apply": apply,
+        "dry_run": args.dry_run,
+        "prune_retired": args.prune_retired_providers,
+        "expected_hash": args.expected_hashes.get(target),
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
+
+
+def docker_ssh_args(config: dict[str, str]) -> list[str]:
+    identity = Path(config["identity_file"]).expanduser()
+    if not identity.is_absolute():
+        raise ValueError("docker identity_file must be absolute or home-relative")
+    if any(ord(char) < 32 or ord(char) == 127 for char in str(identity)):
+        raise ValueError("docker identity_file contains control characters")
+    if not identity.is_file():
+        raise ValueError(f"docker identity_file does not exist: {identity}")
+    if os.name != "nt" and stat.S_IMODE(identity.stat().st_mode) & 0o077:
+        raise ValueError("docker private key permissions must not grant group/other access")
+    return [
+        "ssh", "-o", "ConnectTimeout=15", "-o", "BatchMode=yes",
+        "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
+        "-i", str(identity), config["ssh_host"],
+    ]
+
+
+def _windows_powershell(wsl_script: str, payload: str) -> str:
+    path_b64 = base64.b64encode(wsl_script.encode("utf-8")).decode("ascii")
+    payload_b64 = base64.b64encode(payload.encode("ascii")).decode("ascii")
+    return (
+        "$ErrorActionPreference='Stop';"
+        f"$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{path_b64}'));"
+        f"$p=[Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('{payload_b64}'));"
+        "$h=Join-Path $env:LOCALAPPDATA 'hermes';"
+        "$py=Join-Path $h 'hermes-agent\\venv\\Scripts\\python.exe';"
+        "Get-Content -Raw -LiteralPath $s | & $py - --worker-payload-b64 $p"
+    )
+
+
+def _invoke_target(
+    target: str,
+    policy: dict[str, Any],
+    targets: dict[str, dict[str, str]],
+    args: argparse.Namespace,
+    *,
+    apply: bool,
+) -> dict[str, Any]:
+    payload = _payload_b64(target, policy, args, apply=apply)
+    script = Path(__file__).read_text(encoding="utf-8")
+    worker_args = ["--worker-payload-b64", payload]
+    if target == "wsl":
+        proc = _run([target_python(Path.home() / ".hermes"), str(Path(__file__)), *worker_args], timeout=180)
+    elif target == "docker":
+        config = _target_config(targets, target)
+        command = shlex.join([config["python"], "-", *worker_args])
+        remote = (
+            f"cd {shlex.quote(config['compose_dir'])} && docker compose exec -T "
+            f"--user {shlex.quote(config['container_user'])} {shlex.quote(config['service'])} {command}"
+        )
+        proc = _run([*docker_ssh_args(config), remote], input_text=script, timeout=240)
+    elif target == "macos":
+        config = _target_config(targets, target)
+        remote = shlex.join([config["python"], "-", *worker_args])
+        proc = _run(["ssh", "-o", "ConnectTimeout=30", config["ssh_host"], remote], input_text=script, timeout=240)
+    elif target == "windows":
+        wsl_script = subprocess.run(["wslpath", "-w", str(Path(__file__))], text=True, capture_output=True, check=True).stdout.strip()
+        ps = _windows_powershell(wsl_script, payload)
+        encoded = base64.b64encode(ps.encode("utf-16le")).decode()
+        pwsh = "/mnt/c/Program Files/PowerShell/7/pwsh.exe"
+        proc = _run([pwsh, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], timeout=240)
+    else:
+        raise ValueError(target)
+    return _decode_result(proc, target)
+
+
+def _expected_hash_map(entries: list[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for entry in entries:
+        target, separator, digest = entry.partition("=")
+        if not separator or target not in TARGETS or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            raise ValueError("--expected-hash must be TARGET=64_HEX_SHA256")
+        if target in result:
+            raise ValueError(f"duplicate --expected-hash for {target}")
+        result[target] = digest.lower()
+    return result
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--report", action="store_true", help="report drift (default)")
+    mode.add_argument("--apply", action="store_true", help="apply managed-path changes")
+    p.add_argument("-n", "--dry-run", action="store_true", help="show apply diff without writing")
+    p.add_argument("--target", choices=("all", *TARGETS), default="all")
+    p.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
+    p.add_argument("--targets-file", type=Path, default=DEFAULT_TARGETS_FILE)
+    p.add_argument(
+        "--expected-hash", action="append", default=[], metavar="TARGET=SHA256",
+        help="report-derived config hash required for changed apply targets",
+    )
+    p.add_argument("--prune-retired-providers", action="store_true")
+    p.add_argument("--continue-on-error", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--worker-payload-b64", help=argparse.SUPPRESS)
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if args.worker_payload_b64:
+        payload = json.loads(base64.urlsafe_b64decode(args.worker_payload_b64.encode()))
+        print(json.dumps(_worker(payload), separators=(",", ":")))
+        return 0
+    if args.dry_run and not args.apply:
+        raise SystemExit("--dry-run requires --apply")
+    try:
+        args.expected_hashes = _expected_hash_map(args.expected_hash)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    policy = load_policy(args.policy)
+    target_configs = load_targets(args.targets_file)
+    targets = TARGETS if args.target == "all" else (args.target,)
+    results = []
+    errors = []
+    for target in targets:
+        try:
+            result = _invoke_target(target, policy, target_configs, args, apply=args.apply)
+            results.append(result)
+        except Exception as exc:
+            errors.append({"target": target, "error": str(exc)})
+            if not args.continue_on_error:
+                break
+    output = {"results": results, "errors": errors}
+    if args.json:
+        print(json.dumps(output, indent=2))
+    else:
+        for result in results:
+            print(f"{result['target']}: {result['status']} schema={result['config_version']}/{result['latest_config_version']} applied={result['applied']}")
+            if result.get("diff"):
+                print(result["diff"])
+            if result.get("backup_path"):
+                print(f"backup: {result['backup_path']}")
+        for error in errors:
+            print(f"{error['target']}: ERROR {error['error']}", file=sys.stderr)
+    if errors:
+        return 2
+    return 1 if any(result["status"] == "drift" and not result["applied"] for result in results) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

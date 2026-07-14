@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "credential_env": {
+    "opencode-go": "OPENCODE_GO_API_KEY"
+  },
+  "auxiliary": {
+    "transient_retries": 2,
+    "stale_slots": ["session_search"],
+    "slots": {
+      "compression": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-pro",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}]
+      },
+      "web_extract": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-pro",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}]
+      },
+      "skills_hub": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "approval": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "mcp": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "title_generation": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "tts_audio_tags": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "triage_specifier": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "profile_describer": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "monitor": {
+        "provider": "opencode-go",
+        "model": "deepseek-v4-flash",
+        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+      },
+      "curator": {
+        "provider": "opencode-go",
+        "model": "kimi-k2.6",
+        "extra_body": {"thinking": {"type": "disabled"}},
+        "fallback_chain": [{"provider": "nous", "model": "moonshotai/kimi-k2.6"}]
+      },
+      "kanban_decomposer": {
+        "provider": "opencode-go",
+        "model": "qwen3.7-plus",
+        "fallback_chain": [{"provider": "nous", "model": "qwen/qwen3.7-plus"}]
+      },
+      "vision": {
+        "provider": "nous",
+        "model": "google/gemini-3.1-flash-lite",
+        "fallback_chain": [{"provider": "openai-codex", "model": "gpt-5.6-sol"}]
+      }
+    }
+  },
+  "delegation": {"provider": "opencode-go", "model": "kimi-k2.7-code"},
+  "fallback_providers": [
+    {"provider": "opencode-go", "model": "kimi-k2.7-code"},
+    {"provider": "nous", "model": "openai/gpt-5.6-sol"}
+  ],
+  "retired_providers": ["nim"],
+  "retired_secret_env": ["NVIDIA_API_KEY"]
+}
