@@ -26,7 +26,16 @@ HERE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd(
 DEFAULT_POLICY = HERE / "hermes-fleet-policy.json"
 DEFAULT_TARGETS_FILE = HERE / "hermes-fleet-targets.local.json"
 TARGETS = ("wsl", "windows", "docker", "macos")
-MANAGED_SLOT_KEYS = ("provider", "model", "fallback_chain", "extra_body")
+AUXILIARY_TASKS = frozenset({
+    "approval", "background_review", "compression", "curator", "kanban_decomposer",
+    "mcp", "moa_aggregator", "moa_reference", "monitor", "profile_describer",
+    "skills_hub", "title_generation", "triage_specifier", "tts_audio_tags",
+    "vision", "web_extract",
+})
+REASONING_ONLY_SLOTS = frozenset({"background_review", "moa_reference", "moa_aggregator"})
+REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
+MANAGED_SLOT_KEYS = ("provider", "model", "fallback_chain", "extra_body", "reasoning_effort")
+POLICY_SLOT_KEYS = frozenset((*MANAGED_SLOT_KEYS, "remove_keys"))
 _SAFE_SSH_HOST = re.compile(r"^[A-Za-z0-9_.@:-]+$")
 _SAFE_REMOTE_TOKEN = re.compile(r"^[A-Za-z0-9_./:+~-]+$")
 _SENSITIVE_KEY = re.compile(r"(?:api[_-]?key|secret|password|token|credential|authorization)", re.IGNORECASE)
@@ -38,6 +47,12 @@ def _contains_sensitive_key(value: Any) -> bool:
     if isinstance(value, list):
         return any(_contains_sensitive_key(child) for child in value)
     return isinstance(value, str) and value.startswith("op://")
+
+
+def _validate_reasoning_effort(value: Any, label: str) -> None:
+    if value not in REASONING_EFFORTS:
+        allowed = ", ".join(sorted(REASONING_EFFORTS))
+        raise ValueError(f"{label}.reasoning_effort must be one of: {allowed}")
 
 
 def _validate_route(route: Any, label: str, *, require_fallback: bool) -> None:
@@ -55,6 +70,8 @@ def _validate_route(route: Any, label: str, *, require_fallback: bool) -> None:
     if "extra_body" in route:
         if not isinstance(route["extra_body"], dict):
             raise ValueError(f"{label}.extra_body must be an object")
+        if "reasoning" in route["extra_body"]:
+            raise ValueError(f"{label}.extra_body.reasoning conflicts with reasoning_effort")
         if _contains_sensitive_key(route["extra_body"]):
             raise ValueError(f"{label}.extra_body contains secret-bearing data")
 
@@ -68,7 +85,7 @@ def load_policy(path: Path) -> dict[str, Any]:
     missing = sorted(required - policy.keys())
     if missing:
         raise ValueError(f"policy missing keys: {', '.join(missing)}")
-    if policy["version"] != 1:
+    if policy["version"] != 2:
         raise ValueError("unsupported policy version")
     credential_env = policy["credential_env"]
     if not isinstance(credential_env, dict) or not all(
@@ -85,9 +102,45 @@ def load_policy(path: Path) -> dict[str, Any]:
     slots = auxiliary.get("slots")
     if not isinstance(slots, dict) or not slots:
         raise ValueError("auxiliary.slots must be a non-empty object")
+    missing_slots = sorted(AUXILIARY_TASKS - slots.keys())
+    extra_slots = sorted(slots.keys() - AUXILIARY_TASKS)
+    if missing_slots or extra_slots:
+        raise ValueError(
+            "auxiliary.slots must match the 16-task policy; "
+            f"missing={missing_slots}, extra={extra_slots}"
+        )
     for name, route in slots.items():
-        _validate_route(route, f"auxiliary.slots.{name}", require_fallback=True)
-    _validate_route(policy["delegation"], "delegation", require_fallback=False)
+        label = f"auxiliary.slots.{name}"
+        if not isinstance(route, dict):
+            raise ValueError(f"{label} must be an object")
+        unknown_keys = sorted(set(route) - POLICY_SLOT_KEYS)
+        if unknown_keys:
+            raise ValueError(f"{label} has unknown keys: {', '.join(unknown_keys)}")
+        _validate_reasoning_effort(route.get("reasoning_effort"), label)
+        if name in REASONING_ONLY_SLOTS:
+            routing_keys = sorted(set(route) & {"provider", "model", "fallback_chain", "extra_body"})
+            if routing_keys:
+                raise ValueError(f"{label} is reasoning-only but sets: {', '.join(routing_keys)}")
+        else:
+            _validate_route(route, label, require_fallback=True)
+        remove_keys = route.get("remove_keys", [])
+        if not isinstance(remove_keys, list) or not all(
+            isinstance(key, str) and key in MANAGED_SLOT_KEYS for key in remove_keys
+        ):
+            raise ValueError(f"{label}.remove_keys must contain managed slot keys")
+        if len(remove_keys) != len(set(remove_keys)):
+            raise ValueError(f"{label}.remove_keys contains duplicates")
+        overlap = sorted(set(remove_keys) & set(route))
+        if overlap:
+            raise ValueError(f"{label} both sets and removes: {', '.join(overlap)}")
+    delegation = policy["delegation"]
+    if not isinstance(delegation, dict):
+        raise ValueError("delegation must be an object")
+    unknown_delegation = sorted(set(delegation) - {"provider", "model", "reasoning_effort"})
+    if unknown_delegation:
+        raise ValueError(f"delegation has unknown keys: {', '.join(unknown_delegation)}")
+    _validate_route(delegation, "delegation", require_fallback=False)
+    _validate_reasoning_effort(delegation.get("reasoning_effort"), "delegation")
     fallbacks = policy["fallback_providers"]
     if not isinstance(fallbacks, list) or not fallbacks:
         raise ValueError("fallback_providers must be a non-empty list")
@@ -170,6 +223,22 @@ def _slot_patch(slot_policy: dict[str, Any]) -> dict[str, Any]:
     return {key: copy.deepcopy(slot_policy[key]) for key in MANAGED_SLOT_KEYS if key in slot_policy}
 
 
+def _slot_removed_keys(slot_policy: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(slot_policy.get("remove_keys", ()))
+
+
+def _slot_managed_keys(slot_policy: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*_slot_patch(slot_policy), *_slot_removed_keys(slot_policy))))
+
+
+def _reject_reasoning_override(name: str, current: dict[str, Any]) -> None:
+    extra_body = current.get("extra_body")
+    if isinstance(extra_body, dict) and "reasoning" in extra_body:
+        raise ValueError(
+            f"auxiliary.{name}.extra_body.reasoning conflicts with managed reasoning_effort"
+        )
+
+
 def reconcile_config(
     config: dict[str, Any],
     policy: dict[str, Any],
@@ -193,7 +262,10 @@ def reconcile_config(
         current = aux.get(name)
         if not isinstance(current, dict):
             current = {}
+        _reject_reasoning_override(name, current)
         merged = copy.deepcopy(current)
+        for key in _slot_removed_keys(desired):
+            merged.pop(key, None)
         merged.update(_slot_patch(desired))
         aux[name] = merged
 
@@ -224,7 +296,10 @@ def managed_projection(config: dict[str, Any], policy: dict[str, Any]) -> dict[s
     slots: dict[str, Any] = {}
     for name, desired in policy["auxiliary"]["slots"].items():
         current = aux.get(name) if isinstance(aux.get(name), dict) else {}
-        slots[name] = {key: copy.deepcopy(current.get(key)) for key in _slot_patch(desired)}
+        slots[name] = {
+            key: copy.deepcopy(current.get(key))
+            for key in _slot_managed_keys(desired)
+        }
     providers = config.get("custom_providers") if isinstance(config.get("custom_providers"), list) else []
     env = (((config.get("secrets") or {}).get("onepassword") or {}).get("env"))
     return {
@@ -256,7 +331,7 @@ def unmanaged_projection(config: dict[str, Any], policy: dict[str, Any]) -> dict
         for name, desired in policy["auxiliary"]["slots"].items():
             current = aux.get(name)
             if isinstance(current, dict):
-                for key in _slot_patch(desired):
+                for key in _slot_managed_keys(desired):
                     current.pop(key, None)
                 if not current:
                     aux.pop(name, None)
@@ -317,7 +392,8 @@ def _auth_pool_counts(home: Path) -> dict[str, int]:
 def _required_providers(policy: dict[str, Any]) -> set[str]:
     providers = {policy["delegation"]["provider"]}
     for slot in policy["auxiliary"]["slots"].values():
-        providers.add(slot["provider"])
+        if slot.get("provider"):
+            providers.add(slot["provider"])
         providers.update(entry["provider"] for entry in slot.get("fallback_chain", []))
     providers.update(entry["provider"] for entry in policy["fallback_providers"])
     return providers
@@ -340,6 +416,7 @@ def build_report(
     prune_retired: bool,
     home: Path | None = None,
     latest_config_version: int | None = None,
+    supported_reasoning_slots: set[str] | None = None,
 ) -> dict[str, Any]:
     candidate = reconcile_config(config, policy, supported_slots=supported_slots, prune_retired=prune_retired)
     current = managed_projection(config, policy)
@@ -350,6 +427,8 @@ def build_report(
     env = (((config.get("secrets") or {}).get("onepassword") or {}).get("env"))
     env_keys = sorted(env) if isinstance(env, dict) else []
     pools = _auth_pool_counts(home) if home else {}
+    reasoning_slots = supported_slots if supported_reasoning_slots is None else supported_reasoning_slots
+    missing_reasoning = sorted(set(policy["auxiliary"]["slots"]) - reasoning_slots)
     return {
         "target": target,
         "status": "drift" if current != desired else "clean",
@@ -357,6 +436,8 @@ def build_report(
         "latest_config_version": latest_config_version,
         "schema_current": latest_config_version is None or schema == latest_config_version,
         "supported_slots": sorted(supported_slots),
+        "reasoning_effort_supported": not missing_reasoning,
+        "reasoning_effort_missing_slots": missing_reasoning,
         "credential_pool_counts": pools,
         "onepassword_env_keys": env_keys,
         "missing_credentials": _missing_credentials(policy, pools, env_keys) if home else [],
@@ -410,6 +491,7 @@ def process_config(
     prune_retired: bool,
     expected_hash: str | None,
     supported_slots: set[str],
+    supported_reasoning_slots: set[str],
     latest_config_version: int | None = None,
     target: str = "local",
 ) -> dict[str, Any]:
@@ -419,6 +501,7 @@ def process_config(
     report = build_report(
         before, policy, target=target, supported_slots=supported_slots,
         prune_retired=prune_retired, home=home, latest_config_version=latest_config_version,
+        supported_reasoning_slots=supported_reasoning_slots,
     )
     report.update({
         "changed": report["status"] == "drift",
@@ -427,7 +510,12 @@ def process_config(
         "audited_hash": observed_hash,
         "expected_hash": expected_hash,
     })
-    if not apply or dry_run or not report["changed"]:
+    if not apply or dry_run:
+        return report
+    if not report["reasoning_effort_supported"]:
+        missing = ", ".join(report["reasoning_effort_missing_slots"])
+        raise RuntimeError(f"target runtime lacks reasoning_effort for: {missing}")
+    if not report["changed"]:
         return report
     if latest_config_version is not None and before.get("_config_version") != latest_config_version:
         raise RuntimeError(f"config schema {before.get('_config_version')} is behind target runtime {latest_config_version}")
@@ -472,10 +560,15 @@ def target_python(home: Path) -> str:
     return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else sys.executable
 
 
-def _runtime_schema() -> tuple[int | None, set[str]]:
+def _runtime_schema() -> tuple[int | None, set[str], set[str]]:
     from hermes_cli.config import DEFAULT_CONFIG
     aux = DEFAULT_CONFIG.get("auxiliary") or {}
-    return DEFAULT_CONFIG.get("_config_version"), {key for key, value in aux.items() if isinstance(value, dict)}
+    slots = {key for key, value in aux.items() if isinstance(value, dict)}
+    reasoning_slots = {
+        key for key, value in aux.items()
+        if isinstance(value, dict) and "reasoning_effort" in value
+    }
+    return DEFAULT_CONFIG.get("_config_version"), slots, reasoning_slots
 
 
 def _resolve_home(target: str) -> Path:
@@ -493,7 +586,7 @@ def _worker(payload: dict[str, Any]) -> dict[str, Any]:
     target = payload["target"]
     home = Path(payload["home"]) if payload.get("home") else _resolve_home(target)
     policy = payload["policy"]
-    latest, slots = _runtime_schema()
+    latest, slots, reasoning_slots = _runtime_schema()
     return process_config(
         home, policy,
         apply=payload.get("apply", False),
@@ -501,6 +594,7 @@ def _worker(payload: dict[str, Any]) -> dict[str, Any]:
         prune_retired=payload.get("prune_retired", False),
         expected_hash=payload.get("expected_hash"),
         supported_slots=slots,
+        supported_reasoning_slots=reasoning_slots,
         latest_config_version=latest,
         target=target,
     )

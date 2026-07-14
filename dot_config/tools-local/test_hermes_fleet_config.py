@@ -13,6 +13,25 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("hermes-fleet-config")
 
+EXPECTED_REASONING = {
+    "skills_hub": "none",
+    "title_generation": "none",
+    "tts_audio_tags": "none",
+    "profile_describer": "none",
+    "monitor": "none",
+    "curator": "none",
+    "compression": "low",
+    "web_extract": "low",
+    "vision": "low",
+    "approval": "low",
+    "triage_specifier": "low",
+    "mcp": "medium",
+    "kanban_decomposer": "medium",
+    "background_review": "medium",
+    "moa_reference": "high",
+    "moa_aggregator": "high",
+}
+
 
 def load_module():
     loader = importlib.machinery.SourceFileLoader("hermes_fleet_config", str(SCRIPT))
@@ -83,12 +102,17 @@ class ReconcilerTests(unittest.TestCase):
         self.assertEqual(after["auxiliary"]["compression"]["provider"], "opencode-go")
         self.assertEqual(after["auxiliary"]["compression"]["model"], "deepseek-v4-pro")
         self.assertEqual(after["auxiliary"]["compression"]["fallback_chain"], [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}])
-        self.assertEqual(after["auxiliary"]["curator"]["extra_body"], {"thinking": {"type": "disabled"}})
-        self.assertEqual(after["auxiliary"]["background_review"], before["auxiliary"]["background_review"])
+        self.assertNotIn("extra_body", after["auxiliary"]["curator"])
+        self.assertEqual(after["auxiliary"]["curator"]["reasoning_effort"], "none")
+        self.assertEqual(after["auxiliary"]["background_review"]["provider"], "auto")
+        self.assertEqual(after["auxiliary"]["background_review"]["model"], "")
+        self.assertEqual(after["auxiliary"]["background_review"]["timeout"], 77)
+        self.assertEqual(after["auxiliary"]["background_review"]["reasoning_effort"], "medium")
         self.assertNotIn("session_search", after["auxiliary"])
         self.assertEqual(after["delegation"]["max_iterations"], 88)
         self.assertEqual(after["delegation"]["provider"], "opencode-go")
         self.assertEqual(after["delegation"]["model"], "kimi-k2.7-code")
+        self.assertEqual(after["delegation"]["reasoning_effort"], "medium")
         self.assertEqual(after["fallback_providers"], self.policy["fallback_providers"])
         self.assertNotIn("fallback_model", after)
         self.assertIn("nim", [x["name"] for x in after["custom_providers"]])
@@ -116,7 +140,7 @@ class ReconcilerTests(unittest.TestCase):
             self.m.dump_yaml(config, self.sample())
             self.write_auth(home)
             os.chmod(config, 0o640)
-            result = self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash=self.m.sha256_file(config), supported_slots=set(self.policy["auxiliary"]["slots"]))
+            result = self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash=self.m.sha256_file(config), supported_slots=set(self.policy["auxiliary"]["slots"]), supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]))
             self.assertTrue(result["changed"])
             self.assertTrue(Path(result["backup_path"]).is_file())
             self.assertFalse(config.read_bytes().startswith(b"\xef\xbb\xbf"))
@@ -146,6 +170,7 @@ class ReconcilerTests(unittest.TestCase):
             report = self.m.process_config(
                 home, self.policy, apply=False, dry_run=False, prune_retired=True,
                 expected_hash=None, supported_slots=set(self.policy["auxiliary"]["slots"]),
+                supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]),
             )
             self.assertEqual(report["audited_hash"], self.m.sha256_file(config))
             self.assertIsNone(report["expected_hash"])
@@ -159,6 +184,7 @@ class ReconcilerTests(unittest.TestCase):
             report = self.m.process_config(
                 home, self.policy, apply=False, dry_run=False, prune_retired=True,
                 expected_hash=None, supported_slots=set(self.policy["auxiliary"]["slots"]),
+                supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]),
             )
             changed = self.m.load_yaml(config)
             changed["model"]["default"] = "concurrent-edit"
@@ -168,6 +194,7 @@ class ReconcilerTests(unittest.TestCase):
                     home, self.policy, apply=True, dry_run=False, prune_retired=True,
                     expected_hash=report["audited_hash"],
                     supported_slots=set(self.policy["auxiliary"]["slots"]),
+                    supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]),
                 )
 
     def test_apply_requires_report_hash(self):
@@ -177,7 +204,7 @@ class ReconcilerTests(unittest.TestCase):
             self.m.dump_yaml(config, self.sample())
             self.write_auth(home)
             with self.assertRaisesRegex(RuntimeError, "expected hash from report"):
-                self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash=None, supported_slots=set(self.policy["auxiliary"]["slots"]))
+                self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash=None, supported_slots=set(self.policy["auxiliary"]["slots"]), supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]))
 
     def test_hash_race_refuses_apply(self):
         with tempfile.TemporaryDirectory() as td:
@@ -186,7 +213,7 @@ class ReconcilerTests(unittest.TestCase):
             self.m.dump_yaml(config, self.sample())
             self.write_auth(home)
             with self.assertRaisesRegex(RuntimeError, "changed since audit"):
-                self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash="0" * 64, supported_slots=set(self.policy["auxiliary"]["slots"]))
+                self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash="0" * 64, supported_slots=set(self.policy["auxiliary"]["slots"]), supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]))
 
     def test_apply_refuses_missing_required_credentials(self):
         with tempfile.TemporaryDirectory() as td:
@@ -195,7 +222,20 @@ class ReconcilerTests(unittest.TestCase):
             self.m.dump_yaml(config, self.sample())
             self.write_auth(home, nous=0)
             with self.assertRaisesRegex(RuntimeError, "missing credentials: nous"):
-                self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash=self.m.sha256_file(config), supported_slots=set(self.policy["auxiliary"]["slots"]))
+                self.m.process_config(home, self.policy, apply=True, dry_run=False, prune_retired=True, expected_hash=self.m.sha256_file(config), supported_slots=set(self.policy["auxiliary"]["slots"]), supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]))
+
+    def test_process_config_requires_explicit_reasoning_capability(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            config = home / "config.yaml"
+            self.m.dump_yaml(config, self.sample())
+            self.write_auth(home)
+            with self.assertRaises(TypeError):
+                self.m.process_config(
+                    home, self.policy, apply=False, dry_run=False, prune_retired=True,
+                    expected_hash=None,
+                    supported_slots=set(self.policy["auxiliary"]["slots"]),
+                )
 
     def test_report_redacts_secret_values_and_refs(self):
         report = self.m.build_report(self.sample(), self.policy, target="test", supported_slots=set(self.policy["auxiliary"]["slots"]), prune_retired=True)
@@ -228,7 +268,7 @@ class ReconcilerTests(unittest.TestCase):
 
     def test_policy_rejects_sensitive_extra_body(self):
         policy = json.loads(json.dumps(self.policy))
-        policy["auxiliary"]["slots"]["curator"]["extra_body"]["api_key"] = "literal"
+        policy["auxiliary"]["slots"]["curator"]["extra_body"] = {"api_key": "literal"}
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "policy.json"
             path.write_text(json.dumps(policy), encoding="utf-8")
@@ -269,10 +309,105 @@ class ReconcilerTests(unittest.TestCase):
     def test_policy_has_exact_role_routes(self):
         slots = self.policy["auxiliary"]["slots"]
         self.assertEqual(slots["curator"]["model"], "kimi-k2.6")
-        self.assertEqual(slots["curator"]["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertEqual(slots["curator"]["reasoning_effort"], "none")
+        self.assertEqual(slots["curator"]["remove_keys"], ["extra_body"])
+        self.assertNotIn("extra_body", slots["curator"])
         self.assertEqual(slots["kanban_decomposer"]["model"], "qwen3.7-plus")
         self.assertEqual(self.policy["delegation"]["model"], "kimi-k2.7-code")
+        self.assertEqual(self.policy["delegation"]["reasoning_effort"], "medium")
         self.assertEqual(self.policy["fallback_providers"][1], {"provider": "nous", "model": "openai/gpt-5.6-sol"})
+
+    def test_policy_has_exact_all_16_reasoning_matrix(self):
+        slots = self.policy["auxiliary"]["slots"]
+        self.assertEqual(self.policy["version"], 2)
+        self.assertEqual(set(slots), set(EXPECTED_REASONING))
+        self.assertEqual(
+            {name: route.get("reasoning_effort") for name, route in slots.items()},
+            EXPECTED_REASONING,
+        )
+        for name in ("background_review", "moa_reference", "moa_aggregator"):
+            self.assertNotIn("provider", slots[name])
+            self.assertNotIn("model", slots[name])
+            self.assertNotIn("fallback_chain", slots[name])
+
+    def test_policy_rejects_missing_or_invalid_reasoning_effort(self):
+        for value in (None, "unsupported"):
+            policy = json.loads(json.dumps(self.policy))
+            if value is None:
+                del policy["auxiliary"]["slots"]["vision"]["reasoning_effort"]
+            else:
+                policy["auxiliary"]["slots"]["vision"]["reasoning_effort"] = value
+            with tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "policy.json"
+                path.write_text(json.dumps(policy), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "vision.*reasoning_effort"):
+                    self.m.load_policy(path)
+
+    def test_policy_rejects_explicit_reasoning_wire_override(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["auxiliary"]["slots"]["approval"]["extra_body"] = {
+            "reasoning": {"effort": "high"}
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "approval.*extra_body.reasoning"):
+                self.m.load_policy(path)
+
+    def test_target_reasoning_wire_override_blocks_reconcile(self):
+        config = self.sample()
+        config["auxiliary"]["approval"] = {
+            "provider": "auto",
+            "model": "",
+            "extra_body": {"reasoning": {"effort": "high"}},
+        }
+        with self.assertRaisesRegex(ValueError, "approval.*extra_body.reasoning"):
+            self.m.reconcile_config(
+                config,
+                self.policy,
+                supported_slots=set(EXPECTED_REASONING),
+                prune_retired=False,
+            )
+
+    def test_reasoning_only_slots_do_not_add_provider_requirements(self):
+        providers = self.m._required_providers(self.policy)
+        self.assertNotIn("auto", providers)
+        self.assertEqual(
+            {key for key in self.policy["auxiliary"]["slots"]["background_review"]},
+            {"reasoning_effort"},
+        )
+
+    def test_apply_blocks_when_runtime_lacks_reasoning_capability(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            config = home / "config.yaml"
+            self.m.dump_yaml(config, self.sample())
+            self.write_auth(home)
+            supported = set(EXPECTED_REASONING)
+            supported_reasoning = supported - {"vision"}
+            report = self.m.process_config(
+                home,
+                self.policy,
+                apply=False,
+                dry_run=False,
+                prune_retired=True,
+                expected_hash=None,
+                supported_slots=supported,
+                supported_reasoning_slots=supported_reasoning,
+            )
+            self.assertFalse(report["reasoning_effort_supported"])
+            self.assertEqual(report["reasoning_effort_missing_slots"], ["vision"])
+            with self.assertRaisesRegex(RuntimeError, "reasoning_effort.*vision"):
+                self.m.process_config(
+                    home,
+                    self.policy,
+                    apply=True,
+                    dry_run=False,
+                    prune_retired=True,
+                    expected_hash=report["audited_hash"],
+                    supported_slots=supported,
+                    supported_reasoning_slots=supported_reasoning,
+                )
 
     def test_posix_target_python_prefers_hermes_venv(self):
         with tempfile.TemporaryDirectory() as td:
