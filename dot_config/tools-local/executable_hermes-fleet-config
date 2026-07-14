@@ -129,7 +129,7 @@ def load_policy(path: Path) -> dict[str, Any]:
         if name in REASONING_ONLY_SLOTS | REASONING_INHERITED_SLOTS:
             routing_keys = sorted(set(route) & {"provider", "model", "fallback_chain", "extra_body"})
             if routing_keys:
-                raise ValueError(f"{label} is reasoning-only but sets: {', '.join(routing_keys)}")
+                raise ValueError(f"{label} must not set routing keys: {', '.join(routing_keys)}")
         else:
             _validate_route(route, label, require_fallback=True)
         remove_keys = route.get("remove_keys", [])
