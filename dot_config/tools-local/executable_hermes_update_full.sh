@@ -79,6 +79,7 @@ finalize() {
     fi
     sleep 5
     echo "  Platforms: $(grep 'platform(s)' ~/.hermes/logs/gateway.log | tail -1)"
+    echo "==> After:  $(uname -n) is now $(hermes version 2>/dev/null | grep -m1 '^Hermes Agent' || echo unknown)"
     # ponytail: the dashboard runs under user systemd; hosts without systemctl
     # (e.g. macOS) skip it. Guard rather than fork a second copy of this script.
     if command -v systemctl >/dev/null 2>&1; then
@@ -111,6 +112,12 @@ trap finalize EXIT
 # npm install rewrites package-lock.json (version-dependent churn, not real
 # work). Discard it up front so hermes update doesn't stash/restore.
 git -C "$HERMES_DIR" restore package-lock.json
+
+# Name the machine and the starting version. This script runs identically on
+# every host (locally and over ssh from hermes_update_fleet.sh), so output with
+# no host in it is unreadable the moment more than one install exists.
+echo "==> Host: $(uname -n) ($(uname -s))  dir: $HERMES_DIR"
+echo "==> Before: $(hermes version 2>/dev/null | grep -m1 '^Hermes Agent' || echo unknown)"
 
 echo "==> Running: hermes update"
 START=$(date +%s)
