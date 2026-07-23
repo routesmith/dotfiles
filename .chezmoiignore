@@ -7,3 +7,7 @@ neovim/.prev-version
 
 # git credential store — plaintext tokens, chezmoi must never manage/sync it
 .git-credentials
+
+# host-local git config (credential helpers), included from .gitconfig.
+# Host-varying by nature: helper kinds and binary paths differ per machine.
+.gitconfig.local

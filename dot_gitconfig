@@ -30,3 +30,13 @@
     commit-decoration-style = bold yellow box
     file-style = bold yellow ul
     hunk-header-style = line-number syntax
+
+# Host-local overrides — credential helpers above all. Helper paths and helper
+# *kinds* genuinely differ per machine (Linux has no inherited osxkeychain to
+# reset; the gh binary is under ~/.local/bin on one host and Homebrew on
+# another), so they cannot live in this synced file. Before this include
+# existed they were written straight into ~/.gitconfig as untracked drift, and
+# any `chezmoi apply` silently deleted every credential helper on the machine.
+# Last section so it can override anything above. Missing file is not an error.
+[include]
+    path = ~/.gitconfig.local
