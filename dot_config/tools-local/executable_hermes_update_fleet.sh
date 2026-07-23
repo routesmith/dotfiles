@@ -17,6 +17,17 @@ PWSH="/mnt/c/Program Files/PowerShell/7/pwsh.exe"
 TARGETS="wsl windows macos docker"
 usage() { echo "usage: $(basename "$0") [-n|--dry-run] [--target wsl|windows|macos|docker]" >&2; exit 2; }
 
+# This script is a controller: it only means anything on a host that can reach
+# every install. chezmoi distributes it everywhere, but the targets file is
+# gitignored, so its presence is what marks a host as the controller. Without
+# this guard the jq calls below fail non-fatally and the run emits a table of
+# confident nonsense (a macOS host reporting itself as "(WSL2)").
+if [ ! -r "$TARGETS_FILE" ]; then
+    echo "$(basename "$0"): $TARGETS_FILE not found — this host is not configured" >&2
+    echo "as a fleet controller. Nothing to do." >&2
+    exit 3
+fi
+
 DRY_RUN=""
 ONLY=""
 # A loop, not a case on $1: flags combine, and getting this wrong means
