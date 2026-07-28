@@ -4,13 +4,12 @@ set -euo pipefail
 DASHBOARD_SERVICE="hermes-dashboard.service"
 HERMES_DIR="$HOME/.hermes/hermes-agent"
 UI_DIR="$HERMES_DIR/ui-tui"
-# Local feature branch reapplied after every update (see vault:
-# wiki/concepts/Hermes CLI Vi Mode.md). Empty string disables the step.
-# 2026-07-06: 1Password (PR #36896) merged upstream, so the whole secret-source
-# stack was retired — only the vi-mode commit is still carried. vi-mode-on-upstream
-# = origin/main + the single /vim commit; it cherry-picks clean (no more 1P
-# seams). Pending the vi-mode plugin, which will retire this last carry too.
-FEATURE_BRANCH="vi-mode-on-upstream"
+# 2026-07-28: the fleet is zero-carry. 1Password merged upstream 2026-07-06, and
+# the last carried commit (CLI vi-mode) was dropped today — its 3-line entry in
+# hermes_cli/commands.py collided with every upstream slash-command addition, and
+# the abort-fallback silently pinned the branch (749 commits behind by the time it
+# surfaced). Every install now tracks origin/main directly, so this script no
+# longer reapplies anything: it updates, builds, and restarts.
 
 DRY_RUN=""
 case "${1:-}" in
@@ -19,54 +18,12 @@ case "${1:-}" in
     *) echo "usage: $(basename "$0") [-n|--dry-run]" >&2; exit 2 ;;
 esac
 
-# Reapply the feature branch and restart the gateway. Runs from a trap on
-# EXIT so it happens even if a build step below fails. `hermes update` leaves
-# the repo on vanilla main, which has NO op:// secret support — so a gateway
-# left on main silently loses every 1Password secret (provider keys, Discord/
-# Telegram bot tokens) and all platforms drop. Returning to the feature branch
-# is the one step that must never be skipped, so it lives in the trap.
+# Restart the gateway. Runs from a trap on EXIT so it happens even if a build
+# step below fails — `hermes update` does its own mid-script restart, but that
+# one never refreshes the systemd unit.
 finalize() {
     set +e
-    if [ -n "$FEATURE_BRANCH" ] && git -C "$HERMES_DIR" show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH"; then
-        # npm rewrites these; discard so the rebase sees a clean tree.
-        git -C "$HERMES_DIR" restore package.json package-lock.json 2>/dev/null
-        # cli-config.yaml.example is a comments-only template; upstream and our
-        # secrets stack both append example blocks to it, so the rebase below
-        # conflicts there every time upstream touches that file — and the abort
-        # path then strands the branch hundreds of commits behind (this is the
-        # 243-commit drift we hit 2026-06-30). Union-merge that one file so git
-        # keeps both blocks automatically. Host-local + untracked so it never
-        # leaks into the stack or an upstream PR; idempotent so it self-heals on
-        # any host that runs this script.
-        # ponytail: file-level union, not line-scoped. Worst case is a duplicate
-        # commented block in a template the operator copies once via `hermes
-        # doctor` — never loaded into a live gateway. Narrow it only if the
-        # active YAML at the top of the file ever starts conflicting.
-        attrs="$HERMES_DIR/.git/info/attributes"
-        grep -qxF 'cli-config.yaml.example merge=union' "$attrs" 2>/dev/null \
-            || echo 'cli-config.yaml.example merge=union' >> "$attrs"
-        # Rebase whenever the feature branch is behind main OR we're parked off
-        # it. Gating on off-branch alone silently skips the rebase when `hermes
-        # update` finds main already current and returns us to the feature
-        # branch — how it drifted 169 behind while every run reported success
-        # (2026-07-05). ponytail: `git rebase main <branch>` is a no-op when
-        # already current, so behind-count is the honest trigger.
-        behind_main=$(git -C "$HERMES_DIR" rev-list --count "$FEATURE_BRANCH"..main 2>/dev/null || echo 0)
-        if [ "$behind_main" -gt 0 ] || [ "$(git -C "$HERMES_DIR" rev-parse --abbrev-ref HEAD)" != "$FEATURE_BRANCH" ]; then
-            echo "==> Reapplying $FEATURE_BRANCH onto updated main..."
-            if ! git -C "$HERMES_DIR" rebase main "$FEATURE_BRANCH"; then
-                git -C "$HERMES_DIR" rebase --abort
-                # ponytail: on conflict, stay on the feature branch (pre-update
-                # base) rather than main. Code is one upstream rev behind until
-                # you re-port, but the gateway keeps its 1Password secrets and
-                # platforms — strictly better than a secret-less main.
-                git -C "$HERMES_DIR" checkout "$FEATURE_BRANCH"
-                echo "!!> Rebase conflicted; staying on $FEATURE_BRANCH (pre-update base)."
-                echo "!!> Re-port when convenient: git -C $HERMES_DIR rebase main $FEATURE_BRANCH"
-            fi
-        fi
-    fi
-    echo "==> Restarting gateway (picks up feature branch + refreshes unit)..."
+    echo "==> Restarting gateway (refreshes unit)..."
     if command -v systemctl >/dev/null 2>&1; then
         hermes gateway restart
     else
@@ -98,8 +55,7 @@ plan() {
     echo "DRY RUN — no changes will be made."
     echo "  repo:               $HERMES_DIR"
     echo "  current branch:     $cur"
-    echo "  feature branch:     $FEATURE_BRANCH ($(git -C "$HERMES_DIR" show-ref --verify --quiet "refs/heads/$FEATURE_BRANCH" && echo present || echo MISSING))"
-    echo "  behind origin/main: $behind commit(s) as of last fetch — 'hermes update' fast-forwards main, then rebases the feature branch onto it"
+    echo "  behind origin/main: $behind commit(s) as of last fetch — 'hermes update' fast-forwards main"
     echo "  guards:"
     echo "    npm install:        $(command -v npm >/dev/null 2>&1 && echo RUN || echo SKIP)"
     echo "    ui-tui build:       $([ -d "$UI_DIR" ] && echo RUN || echo SKIP)"
@@ -140,4 +96,4 @@ if [ -d "$UI_DIR" ]; then
     npm run build
 fi
 
-echo "==> Build steps complete; finalize trap will reapply branch + restart."
+echo "==> Build steps complete; finalize trap will restart the gateway."
