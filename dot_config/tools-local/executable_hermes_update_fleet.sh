@@ -82,7 +82,7 @@ version_of() {
                      '& "$env:LOCALAPPDATA\hermes\hermes-agent\venv\Scripts\hermes.exe" version' 2>/dev/null ;;
         macos)   ssh -o ConnectTimeout=15 "$MACOS_HOST" 'zsh -lic "hermes version"' 2>/dev/null ;;
         docker)  "$HERMES_REMOTE" version </dev/null 2>/dev/null ;;
-    esac | grep -m1 '^Hermes Agent' || echo "unreachable"
+    esac | tr -d '\r' | grep -m1 '^Hermes Agent' || echo "unreachable"
 }
 
 # "Hermes Agent v0.19.0 (2026.7.20) · upstream deadb43c · local 5a47f952 (+1…)"
@@ -139,6 +139,24 @@ if [ -n "$DRY_RUN" ]; then
     exit 0
 fi
 
+# The legs are independent, so they run in parallel — wall clock is the
+# slowest leg, not the sum. Verified before parallelizing: no leg reads what
+# another writes (docker's config-sync excludes hermes-agent/; the docker
+# deploy pulls upstream, not the local checkout). Output is buffered per
+# target and replayed sequentially so each section stays one host's story.
+LOGDIR=$(mktemp -d); trap 'rm -rf "$LOGDIR"' EXIT
+for t in $TARGETS; do
+    selected "$t" || continue
+    [ "${BEFORE[$t]}" = "unreachable" ] && continue
+    printf '  %sstarted%s %s\n' "$D" "$R" "${HOSTNAME_OF[$t]}"
+    (
+        upgrade "$t" >"$LOGDIR/$t.log" 2>&1 </dev/null
+        echo $? >"$LOGDIR/$t.rc"
+        version_of "$t" >"$LOGDIR/$t.after"
+    ) &
+done
+wait
+
 for t in $TARGETS; do
     selected "$t" || continue
     printf '\n'
@@ -151,12 +169,13 @@ for t in $TARGETS; do
         continue
     fi
     printf '  %sbefore:%s %s\n\n' "$D" "$R" "$(short "${BEFORE[$t]}")"
-    if upgrade "$t"; then
-        AFTER[$t]=$(version_of "$t")
+    cat "$LOGDIR/$t.log"
+    AFTER[$t]=$(cat "$LOGDIR/$t.after" 2>/dev/null || echo "unreachable")
+    if [ "$(cat "$LOGDIR/$t.rc" 2>/dev/null || echo 1)" = "0" ]; then
         if [ "${AFTER[$t]}" = "${BEFORE[$t]}" ]; then STATUS[$t]="CURRENT"; else STATUS[$t]="UPDATED"; fi
     else
         printf '\n  %sFAILED%s — %s exited non-zero\n' "$RED" "$R" "${HOSTNAME_OF[$t]}"
-        AFTER[$t]=$(version_of "$t"); STATUS[$t]="FAILED"; failed="$failed $t"
+        STATUS[$t]="FAILED"; failed="$failed $t"
     fi
     printf '\n  %safter:%s  %s\n' "$D" "$R" "$(short "${AFTER[$t]}")"
 done
@@ -179,6 +198,11 @@ for t in $TARGETS; do
     printf '  %-20s %s%-11s%s %s\n' "${HOSTNAME_OF[$t]}" "$color" "${STATUS[$t]}" "$R" "$detail"
 done
 rule
+
+# ponytail: $SECONDS is total shell runtime; date -u -d @ formats it as H:MM:SS.
+# Fine under 24h — a fleet run that long has bigger problems than a clock.
+printf '%sfinished%s  %s%s%s  ·  %selapsed%s %s\n' \
+    "$D" "$R" "$D" "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$R" "$D" "$R" "$(date -u -d @"$SECONDS" +%-H:%M:%S)"
 
 if [ -n "$failed" ]; then
     printf '\n%sfailed/skipped:%s%s\n' "$RED" "$R" "$failed"
