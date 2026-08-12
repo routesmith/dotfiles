@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Drive a Hermes version upgrade across all four installs and report the
+# Drive a Hermes version upgrade across the three active installs and report the
 # before/after per host so silent drift can't hide again — the 2026-07-22
-# failure was docker + macos sitting 2 weeks behind while every local run
-# reported success without ever naming a host or a version.
+# original failure was Docker + macOS sitting two weeks behind while every
+# local run reported success without ever naming a host or a version. Docker
+# was retired from the fleet on 2026-08-11; the remaining targets stay explicit.
 #
 # Scope is versions only. Model/routing config is the other tool:
 # `hermes-fleet-config --report|--apply` (same targets, different job).
@@ -10,12 +11,10 @@ set -uo pipefail
 
 FULL_UPDATE="$HOME/.config/tools-local/hermes_update_full.sh"
 TARGETS_FILE="$HOME/.config/tools-local/hermes-fleet-targets.local.json"
-HERMES_REMOTE="$HOME/.zsh/bin/hermes-remote"
-ANSIBLE_UPDATE="$HOME/git/homelab-ansible/scripts/update-hermes.sh"
 PWSH="/mnt/c/Program Files/PowerShell/7/pwsh.exe"
 
-TARGETS="wsl windows macos docker"
-usage() { echo "usage: $(basename "$0") [-n|--dry-run] [--target wsl|windows|macos|docker]" >&2; exit 2; }
+TARGETS="wsl windows macos"
+usage() { echo "usage: $(basename "$0") [-n|--dry-run] [--target wsl|windows|macos]" >&2; exit 2; }
 
 # This script is a controller: it only means anything on a host that can reach
 # every install. chezmoi distributes it everywhere, but the targets file is
@@ -43,11 +42,9 @@ while [ $# -gt 0 ]; do
     shift
 done
 MACOS_HOST=$(jq -r '.macos.ssh_host' "$TARGETS_FILE")
-DOCKER_HOST=$(jq -r '.docker.ssh_host' "$TARGETS_FILE")
 
 # Short names for display: strip the user@ and the .internal suffix.
 macos_short="${MACOS_HOST#*@}"; macos_short="${macos_short%%.*}"
-docker_short="${DOCKER_HOST%%.*}"
 
 # The whole point of this script: every line of output says which machine it is
 # about. Target names are the internal handles; these are the machines. Derived,
@@ -59,9 +56,8 @@ declare -A HOSTNAME_OF=(
     [wsl]="$this_host (WSL2)"
     [windows]="$this_host (Windows)"
     [macos]="$macos_short"
-    [docker]="$docker_short"
 )
-declare -A METHOD_OF=([wsl]="git" [windows]="git" [macos]="git" [docker]="docker image")
+declare -A METHOD_OF=([wsl]="git" [windows]="git" [macos]="git")
 
 if [ -t 1 ]; then
     B=$(tput bold); D=$(tput dim); R=$(tput sgr0)
@@ -81,7 +77,6 @@ version_of() {
         windows) "$PWSH" -NoProfile -NonInteractive -Command \
                      '& "$env:LOCALAPPDATA\hermes\hermes-agent\venv\Scripts\hermes.exe" version' 2>/dev/null ;;
         macos)   ssh -o ConnectTimeout=15 "$MACOS_HOST" 'zsh -lic "hermes version"' 2>/dev/null ;;
-        docker)  "$HERMES_REMOTE" version </dev/null 2>/dev/null ;;
     esac | tr -d '\r' | grep -m1 '^Hermes Agent' || echo "unreachable"
 }
 
@@ -110,11 +105,6 @@ upgrade() {
         # the remote shell resolves it. zsh -lic: non-login ssh has no Homebrew
         # PATH.
         macos)   ssh "$MACOS_HOST" 'zsh -lic "~/.config/tools-local/hermes_update_full.sh"' ;;
-        # docker-host-01 is Ansible-owned, so this defers to the sanctioned
-        # deploy path rather than driving Compose directly: update-hermes.sh
-        # does the disk-space guard, OCI provenance capture, and post-deploy
-        # smoke tests that a bare `compose pull && up -d` skips.
-        docker)  "$ANSIBLE_UPDATE" ;;
     esac
 }
 
@@ -140,9 +130,8 @@ if [ -n "$DRY_RUN" ]; then
 fi
 
 # The legs are independent, so they run in parallel — wall clock is the
-# slowest leg, not the sum. Verified before parallelizing: no leg reads what
-# another writes (docker's config-sync excludes hermes-agent/; the docker
-# deploy pulls upstream, not the local checkout). Output is buffered per
+# slowest leg, not the sum. Verified before parallelizing: no remaining leg
+# reads what another writes. Output is buffered per
 # target and replayed sequentially so each section stays one host's story.
 LOGDIR=$(mktemp -d); trap 'rm -rf "$LOGDIR"' EXIT
 for t in $TARGETS; do

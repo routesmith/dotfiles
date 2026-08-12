@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-SCRIPT = Path(__file__).with_name("hermes-fleet-config")
+SCRIPT = Path(__file__).with_name("executable_hermes-fleet-config")
 
 EXPECTED_REASONING = {
     "skills_hub": "none",
@@ -69,14 +69,6 @@ class ReconcilerTests(unittest.TestCase):
 
     def target_data(self):
         return {
-            "docker": {
-                "ssh_host": "docker.example",
-                "identity_file": "/tmp/fleet-test-key",
-                "compose_dir": "/srv/agent",
-                "service": "agent",
-                "container_user": "12345",
-                "python": "/app/venv/bin/python3",
-            },
             "macos": {
                 "ssh_host": "operator@mac.example",
                 "python": "/srv/agent/venv/bin/python3",
@@ -447,30 +439,6 @@ class ReconcilerTests(unittest.TestCase):
         result = subprocess.run([python, "-m", "py_compile", str(SCRIPT)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_docker_ssh_is_agent_independent(self):
-        with tempfile.TemporaryDirectory() as td:
-            identity = Path(td) / "fleet-test-key"
-            identity.write_text("synthetic private key", encoding="utf-8")
-            identity.chmod(0o600)
-            config = self.target_data()["docker"]
-            config["identity_file"] = str(identity)
-            args = self.m.docker_ssh_args(config)
-            self.assertIn("BatchMode=yes", args)
-            self.assertIn("IdentitiesOnly=yes", args)
-            self.assertIn("IdentityAgent=none", args)
-            self.assertIn(str(identity), args)
-            self.assertEqual(args[-1], "docker.example")
-
-    def test_docker_ssh_rejects_permissive_private_key(self):
-        with tempfile.TemporaryDirectory() as td:
-            identity = Path(td) / "fleet-test-key"
-            identity.write_text("synthetic private key", encoding="utf-8")
-            identity.chmod(0o644)
-            config = self.target_data()["docker"]
-            config["identity_file"] = str(identity)
-            with self.assertRaisesRegex(ValueError, "private key permissions"):
-                self.m.docker_ssh_args(config)
-
     def test_windows_powershell_does_not_interpolate_script_path(self):
         path = "C:\\odd'path\\$name`tick\nsegment\\tool.py"
         ps = self.m._windows_powershell(path, "safe-payload_123=")
@@ -483,21 +451,20 @@ class ReconcilerTests(unittest.TestCase):
             path = Path(td) / "targets.json"
             path.write_text(json.dumps(self.target_data()), encoding="utf-8")
             targets = self.m.load_targets(path)
-            self.assertEqual(targets["docker"]["python"], "/app/venv/bin/python3")
             self.assertEqual(targets["macos"]["ssh_host"], "operator@mac.example")
 
     def test_target_file_rejects_shell_injection(self):
         data = self.target_data()
-        data["docker"]["compose_dir"] = "/srv/agent;touch-pwned"
+        data["macos"]["python"] = "/srv/agent;touch-pwned"
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "targets.json"
             path.write_text(json.dumps(data), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "unsafe compose_dir"):
+            with self.assertRaisesRegex(ValueError, "unsafe python"):
                 self.m.load_targets(path)
 
     def test_target_file_rejects_unsafe_ssh_host(self):
         data = self.target_data()
-        data["docker"]["ssh_host"] = "-oProxyCommand=bad"
+        data["macos"]["ssh_host"] = "-oProxyCommand=bad"
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "targets.json"
             path.write_text(json.dumps(data), encoding="utf-8")
@@ -517,7 +484,7 @@ class ReconcilerTests(unittest.TestCase):
 
     def test_missing_remote_target_config_is_explicit(self):
         with self.assertRaisesRegex(RuntimeError, "missing host-local target config"):
-            self.m._target_config({}, "docker")
+            self.m._target_config({}, "macos")
 
 
 if __name__ == "__main__":
