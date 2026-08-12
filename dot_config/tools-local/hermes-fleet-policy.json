@@ -8,77 +8,43 @@
     "stale_slots": ["session_search"],
     "slots": {
       "compression": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-pro",
-        "reasoning_effort": "low",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "web_extract": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-pro",
-        "reasoning_effort": "low",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "skills_hub": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "none",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "approval": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "low",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "mcp": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "medium",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "title_generation": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
+        "provider": "nous",
+        "model": "deepseek/deepseek-v4-flash",
         "reasoning_effort": "none",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["fallback_chain"]
       },
       "tts_audio_tags": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "none",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "triage_specifier": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "low",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "profile_describer": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "none",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "monitor": {
-        "provider": "opencode-go",
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "none",
-        "fallback_chain": [{"provider": "nous", "model": "deepseek/deepseek-v4-flash"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort"]
       },
       "curator": {
-        "provider": "opencode-go",
-        "model": "kimi-k2.6",
-        "reasoning_effort": "none",
-        "remove_keys": ["extra_body"],
-        "fallback_chain": [{"provider": "nous", "model": "moonshotai/kimi-k2.6"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort", "extra_body"]
       },
       "kanban_decomposer": {
-        "provider": "opencode-go",
-        "model": "qwen3.7-plus",
-        "reasoning_effort": "medium",
-        "fallback_chain": [{"provider": "nous", "model": "qwen/qwen3.7-plus"}]
+        "remove_keys": ["provider", "model", "fallback_chain", "reasoning_effort", "extra_body"]
       },
       "vision": {
         "provider": "nous",
@@ -87,13 +53,13 @@
         "fallback_chain": [{"provider": "openai-codex", "model": "gpt-5.6-sol"}]
       },
       "background_review": {
-        "remove_keys": ["reasoning_effort"]
+        "remove_keys": ["provider", "model", "reasoning_effort"]
       },
       "moa_reference": {
-        "reasoning_effort": "high"
+        "remove_keys": ["provider", "model", "reasoning_effort"]
       },
       "moa_aggregator": {
-        "reasoning_effort": "high"
+        "remove_keys": ["provider", "model", "reasoning_effort"]
       }
     }
   },

@@ -11,26 +11,9 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-SCRIPT = Path(__file__).with_name("executable_hermes-fleet-config")
-
-EXPECTED_REASONING = {
-    "skills_hub": "none",
-    "title_generation": "none",
-    "tts_audio_tags": "none",
-    "profile_describer": "none",
-    "monitor": "none",
-    "curator": "none",
-    "compression": "low",
-    "web_extract": "low",
-    "vision": "low",
-    "approval": "low",
-    "triage_specifier": "low",
-    "mcp": "medium",
-    "kanban_decomposer": "medium",
-    "moa_reference": "high",
-    "moa_aggregator": "high",
-}
-
+SCRIPT = Path(__file__).with_name("hermes-fleet-config")
+if not SCRIPT.is_file():
+    SCRIPT = Path(__file__).with_name("executable_hermes-fleet-config")
 
 def load_module():
     loader = importlib.machinery.SourceFileLoader("hermes_fleet_config", str(SCRIPT))
@@ -55,6 +38,7 @@ class ReconcilerTests(unittest.TestCase):
                 "compression": {"provider": "auto", "model": "", "timeout": 999},
                 "curator": {"provider": "auto", "model": "", "extra_body": {"old": True}},
                 "background_review": {"provider": "auto", "model": "", "timeout": 77, "reasoning_effort": "medium"},
+                "goal_judge": {"provider": "custom", "model": "keep-me"},
                 "session_search": {"provider": "auto", "model": ""},
             },
             "delegation": {"provider": "", "model": "", "max_iterations": 88},
@@ -90,15 +74,18 @@ class ReconcilerTests(unittest.TestCase):
         self.assertEqual(after["model"], before["model"])
         self.assertEqual(after["gateway"], before["gateway"])
         self.assertEqual(after["auxiliary"]["compression"]["timeout"], 999)
-        self.assertEqual(after["auxiliary"]["compression"]["provider"], "opencode-go")
-        self.assertEqual(after["auxiliary"]["compression"]["model"], "deepseek-v4-pro")
-        self.assertEqual(after["auxiliary"]["compression"]["fallback_chain"], [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}])
-        self.assertNotIn("extra_body", after["auxiliary"]["curator"])
-        self.assertEqual(after["auxiliary"]["curator"]["reasoning_effort"], "none")
-        self.assertEqual(after["auxiliary"]["background_review"]["provider"], "auto")
-        self.assertEqual(after["auxiliary"]["background_review"]["model"], "")
+        for key in ("provider", "model", "fallback_chain", "reasoning_effort"):
+            self.assertNotIn(key, after["auxiliary"]["compression"])
+        self.assertNotIn("curator", after["auxiliary"])
+        self.assertNotIn("provider", after["auxiliary"]["background_review"])
+        self.assertNotIn("model", after["auxiliary"]["background_review"])
         self.assertEqual(after["auxiliary"]["background_review"]["timeout"], 77)
         self.assertNotIn("reasoning_effort", after["auxiliary"]["background_review"])
+        self.assertEqual(after["auxiliary"]["goal_judge"], before["auxiliary"]["goal_judge"])
+        self.assertEqual(after["auxiliary"]["title_generation"], {
+            "provider": "nous", "model": "deepseek/deepseek-v4-flash", "reasoning_effort": "none",
+        })
+        self.assertEqual(after["auxiliary"]["vision"]["provider"], "nous")
         self.assertNotIn("session_search", after["auxiliary"])
         self.assertEqual(after["delegation"]["max_iterations"], 88)
         self.assertEqual(after["delegation"]["provider"], "opencode-go")
@@ -250,11 +237,11 @@ class ReconcilerTests(unittest.TestCase):
 
     def test_policy_rejects_slot_missing_model(self):
         policy = json.loads(json.dumps(self.policy))
-        del policy["auxiliary"]["slots"]["curator"]["model"]
+        del policy["auxiliary"]["slots"]["title_generation"]["model"]
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "policy.json"
             path.write_text(json.dumps(policy), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "curator.*model"):
+            with self.assertRaisesRegex(ValueError, "title_generation.*model"):
                 self.m.load_policy(path)
 
     def test_policy_rejects_sensitive_extra_body(self):
@@ -297,45 +284,53 @@ class ReconcilerTests(unittest.TestCase):
         self.assertNotIn("must-not-appear", json.dumps(report))
         self.assertIn("[REDACTED]", json.dumps(report))
 
-    def test_policy_has_exact_role_routes(self):
+    def test_policy_has_only_candidate_b_explicit_routes(self):
         slots = self.policy["auxiliary"]["slots"]
-        self.assertEqual(slots["curator"]["model"], "kimi-k2.6")
-        self.assertEqual(slots["curator"]["reasoning_effort"], "none")
-        self.assertEqual(slots["curator"]["remove_keys"], ["extra_body"])
-        self.assertNotIn("extra_body", slots["curator"])
-        self.assertEqual(slots["kanban_decomposer"]["model"], "qwen3.7-plus")
+        explicit = {name for name, route in slots.items() if "provider" in route}
+        self.assertEqual(explicit, {"title_generation", "vision"})
+        self.assertEqual(slots["title_generation"], {
+            "provider": "nous",
+            "model": "deepseek/deepseek-v4-flash",
+            "reasoning_effort": "none",
+            "remove_keys": ["fallback_chain"],
+        })
+        self.assertEqual(slots["vision"]["fallback_chain"], [
+            {"provider": "openai-codex", "model": "gpt-5.6-sol"},
+        ])
         self.assertEqual(self.policy["delegation"]["model"], "kimi-k2.7-code")
         self.assertEqual(self.policy["delegation"]["reasoning_effort"], "medium")
         self.assertEqual(self.policy["fallback_providers"][1], {"provider": "nous", "model": "openai/gpt-5.6-sol"})
 
-    def test_policy_has_exact_15_task_reasoning_matrix_plus_inherited_review(self):
+    def test_policy_cleanup_uses_remove_keys_and_preset_boundaries(self):
         slots = self.policy["auxiliary"]["slots"]
         self.assertEqual(self.policy["version"], 3)
-        self.assertEqual(set(slots), set(EXPECTED_REASONING) | {"background_review"})
-        self.assertEqual(
-            {name: route["reasoning_effort"] for name, route in slots.items() if "reasoning_effort" in route},
-            EXPECTED_REASONING,
-        )
-        self.assertEqual(slots["background_review"], {"remove_keys": ["reasoning_effort"]})
+        for name in set(slots) - {"title_generation", "vision"}:
+            self.assertEqual(set(slots[name]), {"remove_keys"})
         for name in ("background_review", "moa_reference", "moa_aggregator"):
-            self.assertNotIn("provider", slots[name])
-            self.assertNotIn("model", slots[name])
-            self.assertNotIn("fallback_chain", slots[name])
+            self.assertEqual(slots[name]["remove_keys"], ["provider", "model", "reasoning_effort"])
 
-    def test_policy_rejects_missing_or_invalid_reasoning_effort(self):
-        for value in (None, "unsupported"):
-            policy = json.loads(json.dumps(self.policy))
-            if value is None:
-                del policy["auxiliary"]["slots"]["vision"]["reasoning_effort"]
-            else:
-                policy["auxiliary"]["slots"]["vision"]["reasoning_effort"] = value
-            with tempfile.TemporaryDirectory() as td:
-                path = Path(td) / "policy.json"
-                path.write_text(json.dumps(policy), encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "vision.*reasoning_effort"):
-                    self.m.load_policy(path)
+    def test_policy_accepts_sparse_set_and_remove_ownership(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["auxiliary"]["slots"] = {
+            "vision": policy["auxiliary"]["slots"]["vision"],
+            "compression": {"remove_keys": ["provider", "model"]},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            loaded = self.m.load_policy(path)
+        self.assertEqual(set(loaded["auxiliary"]["slots"]), {"vision", "compression"})
 
-    def test_policy_requires_background_review_inheritance_exception(self):
+    def test_policy_rejects_invalid_reasoning_effort(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["auxiliary"]["slots"]["vision"]["reasoning_effort"] = "unsupported"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "vision.*reasoning_effort"):
+                self.m.load_policy(path)
+
+    def test_policy_requires_preset_slots_to_be_removal_only(self):
         for route in ({"reasoning_effort": "medium"}, {}, {"remove_keys": []}):
             policy = json.loads(json.dumps(self.policy))
             policy["auxiliary"]["slots"]["background_review"] = route
@@ -371,13 +366,10 @@ class ReconcilerTests(unittest.TestCase):
                 prune_retired=False,
             )
 
-    def test_reasoning_only_slots_do_not_add_provider_requirements(self):
+    def test_cleanup_only_slots_do_not_add_provider_requirements(self):
         providers = self.m._required_providers(self.policy)
         self.assertNotIn("auto", providers)
-        self.assertEqual(
-            {key for key in self.policy["auxiliary"]["slots"]["background_review"]},
-            {"remove_keys"},
-        )
+        self.assertEqual(set(self.policy["auxiliary"]["slots"]["background_review"]), {"remove_keys"})
 
     def test_inherited_background_review_does_not_require_reasoning_capability(self):
         supported = set(self.policy["auxiliary"]["slots"])
@@ -452,6 +444,9 @@ class ReconcilerTests(unittest.TestCase):
             path.write_text(json.dumps(self.target_data()), encoding="utf-8")
             targets = self.m.load_targets(path)
             self.assertEqual(targets["macos"]["ssh_host"], "operator@mac.example")
+
+    def test_supported_targets_remain_wsl_windows_and_macos(self):
+        self.assertEqual(self.m.TARGETS, ("wsl", "windows", "macos"))
 
     def test_target_file_rejects_shell_injection(self):
         data = self.target_data()

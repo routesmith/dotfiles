@@ -32,8 +32,7 @@ AUXILIARY_TASKS = frozenset({
     "skills_hub", "title_generation", "triage_specifier", "tts_audio_tags",
     "vision", "web_extract",
 })
-REASONING_ONLY_SLOTS = frozenset({"moa_reference", "moa_aggregator"})
-REASONING_INHERITED_SLOTS = frozenset({"background_review"})
+PRESET_OWNED_SLOTS = frozenset({"background_review", "moa_reference", "moa_aggregator"})
 REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"})
 MANAGED_SLOT_KEYS = ("provider", "model", "fallback_chain", "extra_body", "reasoning_effort")
 POLICY_SLOT_KEYS = frozenset((*MANAGED_SLOT_KEYS, "remove_keys"))
@@ -56,25 +55,31 @@ def _validate_reasoning_effort(value: Any, label: str) -> None:
         raise ValueError(f"{label}.reasoning_effort must be one of: {allowed}")
 
 
+def _validate_extra_body(value: Any, label: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label}.extra_body must be an object")
+    if "reasoning" in value:
+        raise ValueError(f"{label}.extra_body.reasoning conflicts with reasoning_effort")
+    if _contains_sensitive_key(value):
+        raise ValueError(f"{label}.extra_body contains secret-bearing data")
+
+
 def _validate_route(route: Any, label: str, *, require_fallback: bool) -> None:
     if not isinstance(route, dict):
         raise ValueError(f"{label} must be an object")
     for key in ("provider", "model"):
         if not isinstance(route.get(key), str) or not route[key].strip():
             raise ValueError(f"{label} requires non-empty {key}")
-    if require_fallback:
-        chain = route.get("fallback_chain")
+    chain = route.get("fallback_chain")
+    if require_fallback and (not isinstance(chain, list) or not chain):
+        raise ValueError(f"{label} requires a non-empty fallback_chain")
+    if chain is not None:
         if not isinstance(chain, list) or not chain:
             raise ValueError(f"{label} requires a non-empty fallback_chain")
         for index, entry in enumerate(chain):
             _validate_route(entry, f"{label}.fallback_chain[{index}]", require_fallback=False)
     if "extra_body" in route:
-        if not isinstance(route["extra_body"], dict):
-            raise ValueError(f"{label}.extra_body must be an object")
-        if "reasoning" in route["extra_body"]:
-            raise ValueError(f"{label}.extra_body.reasoning conflicts with reasoning_effort")
-        if _contains_sensitive_key(route["extra_body"]):
-            raise ValueError(f"{label}.extra_body contains secret-bearing data")
+        _validate_extra_body(route["extra_body"], label)
 
 
 def load_policy(path: Path) -> dict[str, Any]:
@@ -103,13 +108,9 @@ def load_policy(path: Path) -> dict[str, Any]:
     slots = auxiliary.get("slots")
     if not isinstance(slots, dict) or not slots:
         raise ValueError("auxiliary.slots must be a non-empty object")
-    missing_slots = sorted(AUXILIARY_TASKS - slots.keys())
     extra_slots = sorted(slots.keys() - AUXILIARY_TASKS)
-    if missing_slots or extra_slots:
-        raise ValueError(
-            "auxiliary.slots must match the 16-task policy; "
-            f"missing={missing_slots}, extra={extra_slots}"
-        )
+    if extra_slots:
+        raise ValueError(f"auxiliary.slots has unsupported tasks: {', '.join(extra_slots)}")
     for name, route in slots.items():
         label = f"auxiliary.slots.{name}"
         if not isinstance(route, dict):
@@ -117,21 +118,8 @@ def load_policy(path: Path) -> dict[str, Any]:
         unknown_keys = sorted(set(route) - POLICY_SLOT_KEYS)
         if unknown_keys:
             raise ValueError(f"{label} has unknown keys: {', '.join(unknown_keys)}")
-        if name in REASONING_INHERITED_SLOTS:
-            if "reasoning_effort" in route:
-                raise ValueError(f"{label} inherits the main agent reasoning effort")
-            if route.get("remove_keys") != ["reasoning_effort"]:
-                raise ValueError(
-                    f"{label}.remove_keys must be exactly ['reasoning_effort']"
-                )
-        else:
-            _validate_reasoning_effort(route.get("reasoning_effort"), label)
-        if name in REASONING_ONLY_SLOTS | REASONING_INHERITED_SLOTS:
-            routing_keys = sorted(set(route) & {"provider", "model", "fallback_chain", "extra_body"})
-            if routing_keys:
-                raise ValueError(f"{label} must not set routing keys: {', '.join(routing_keys)}")
-        else:
-            _validate_route(route, label, require_fallback=True)
+        if "extra_body" in route:
+            _validate_extra_body(route["extra_body"], label)
         remove_keys = route.get("remove_keys", [])
         if not isinstance(remove_keys, list) or not all(
             isinstance(key, str) and key in MANAGED_SLOT_KEYS for key in remove_keys
@@ -142,6 +130,16 @@ def load_policy(path: Path) -> dict[str, Any]:
         overlap = sorted(set(remove_keys) & set(route))
         if overlap:
             raise ValueError(f"{label} both sets and removes: {', '.join(overlap)}")
+        patch_keys = sorted(set(route) & set(MANAGED_SLOT_KEYS))
+        if not patch_keys and not remove_keys:
+            raise ValueError(f"{label} must set or remove at least one managed key")
+        if name in PRESET_OWNED_SLOTS and patch_keys:
+            raise ValueError(f"{label} is preset-owned and may only remove managed keys")
+        if "reasoning_effort" in route:
+            _validate_reasoning_effort(route["reasoning_effort"], label)
+        routing_keys = set(route) & {"provider", "model", "fallback_chain"}
+        if routing_keys:
+            _validate_route(route, label, require_fallback=False)
     delegation = policy["delegation"]
     if not isinstance(delegation, dict):
         raise ValueError("delegation must be an object")
@@ -273,7 +271,10 @@ def reconcile_config(
         for key in _slot_removed_keys(desired):
             merged.pop(key, None)
         merged.update(_slot_patch(desired))
-        aux[name] = merged
+        if merged:
+            aux[name] = merged
+        else:
+            aux.pop(name, None)
 
     delegation = out.setdefault("delegation", {})
     if not isinstance(delegation, dict):
