@@ -4,7 +4,7 @@ Cross-platform dotfiles for WSL Ubuntu 24.04 and macOS Sequoia, managed with [ch
 
 ## Quick Start
 ```zsh
-chezmoi init git@github.com:routesmith/dotfiles.git
+chezmoi init routesmith/dotfiles
 # Edit ~/.config/chezmoi/chezmoi.toml and add your github_username
 chezmoi apply
 ```
