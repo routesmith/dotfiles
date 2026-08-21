@@ -68,10 +68,7 @@
     "model": "kimi-k2.7-code",
     "reasoning_effort": "medium"
   },
-  "fallback_providers": [
-    {"provider": "opencode-go", "model": "kimi-k2.7-code"},
-    {"provider": "nous", "model": "openai/gpt-5.6-sol"}
-  ],
+  "fallback_providers": [],
   "retired_providers": ["nim"],
   "retired_secret_env": ["NVIDIA_API_KEY"]
 }

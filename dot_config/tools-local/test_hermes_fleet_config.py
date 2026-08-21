@@ -106,6 +106,37 @@ class ReconcilerTests(unittest.TestCase):
         twice = self.m.reconcile_config(once, self.policy, supported_slots=set(self.policy["auxiliary"]["slots"]), prune_retired=True)
         self.assertEqual(once, twice)
 
+    def test_empty_main_fallback_replaces_modern_and_legacy_config(self):
+        before = self.sample()
+        self.assertTrue(before["fallback_providers"])
+        self.assertIn("fallback_model", before)
+        after = self.m.reconcile_config(
+            before,
+            self.policy,
+            supported_slots=set(self.policy["auxiliary"]["slots"]),
+            prune_retired=True,
+        )
+        self.assertEqual(after["fallback_providers"], [])
+        self.assertNotIn("fallback_model", after)
+
+    def test_empty_main_fallback_projection_is_current_format_and_idempotent(self):
+        once = self.m.reconcile_config(
+            self.sample(),
+            self.policy,
+            supported_slots=set(self.policy["auxiliary"]["slots"]),
+            prune_retired=True,
+        )
+        projection = self.m.managed_projection(once, self.policy)
+        self.assertEqual(projection["fallback_providers"], [])
+        self.assertFalse(projection["fallback_model_present"])
+        twice = self.m.reconcile_config(
+            once,
+            self.policy,
+            supported_slots=set(self.policy["auxiliary"]["slots"]),
+            prune_retired=True,
+        )
+        self.assertEqual(once, twice)
+
     def test_unmanaged_projection_is_equal(self):
         before = self.sample()
         after = self.m.reconcile_config(before, self.policy, supported_slots=set(self.policy["auxiliary"]["slots"]), prune_retired=True)
@@ -244,6 +275,42 @@ class ReconcilerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "title_generation.*model"):
                 self.m.load_policy(path)
 
+    def test_policy_accepts_empty_main_fallback_chain(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["fallback_providers"] = []
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            loaded = self.m.load_policy(path)
+        self.assertEqual(loaded["fallback_providers"], [])
+
+    def test_policy_rejects_non_list_main_fallback_chain(self):
+        for invalid in (None, {}, "nous"):
+            policy = json.loads(json.dumps(self.policy))
+            policy["fallback_providers"] = invalid
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "policy.json"
+                path.write_text(json.dumps(policy), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "fallback_providers must be a list"):
+                    self.m.load_policy(path)
+
+    def test_policy_rejects_invalid_nonempty_main_fallback_entries(self):
+        invalid_entries = (
+            "not-an-object",
+            {"provider": "", "model": "valid"},
+            {"provider": "valid", "model": ""},
+            {"provider": "valid"},
+            {"model": "valid"},
+        )
+        for invalid in invalid_entries:
+            policy = json.loads(json.dumps(self.policy))
+            policy["fallback_providers"] = [invalid]
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "policy.json"
+                path.write_text(json.dumps(policy), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "fallback_providers\\[0\\]"):
+                    self.m.load_policy(path)
+
     def test_policy_rejects_sensitive_extra_body(self):
         policy = json.loads(json.dumps(self.policy))
         policy["auxiliary"]["slots"]["curator"]["extra_body"] = {"api_key": "literal"}
@@ -299,7 +366,73 @@ class ReconcilerTests(unittest.TestCase):
         ])
         self.assertEqual(self.policy["delegation"]["model"], "kimi-k2.7-code")
         self.assertEqual(self.policy["delegation"]["reasoning_effort"], "medium")
-        self.assertEqual(self.policy["fallback_providers"][1], {"provider": "nous", "model": "openai/gpt-5.6-sol"})
+        self.assertEqual(self.policy["fallback_providers"], [])
+
+    def test_removed_main_fallback_routes_do_not_create_credential_requirements(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            config = home / "config.yaml"
+            before = self.sample()
+            before["fallback_providers"] = [
+                {"provider": "former-main-a", "model": "old-a"},
+                {"provider": "former-main-b", "model": "old-b"},
+            ]
+            self.m.dump_yaml(config, before)
+            self.write_auth(home)
+            result = self.m.process_config(
+                home,
+                self.policy,
+                apply=True,
+                dry_run=False,
+                prune_retired=True,
+                expected_hash=self.m.sha256_file(config),
+                supported_slots=set(self.policy["auxiliary"]["slots"]),
+                supported_reasoning_slots=set(self.policy["auxiliary"]["slots"]),
+            )
+            self.assertTrue(result["applied"])
+            self.assertEqual(self.m.load_yaml(config)["fallback_providers"], [])
+
+    def test_required_providers_still_include_delegation_and_auxiliary_routes(self):
+        providers = self.m._required_providers(self.policy)
+        self.assertEqual(providers, {"opencode-go", "nous", "openai-codex"})
+
+    def test_temp_home_report_dry_run_apply_clean_report(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            config = home / "config.yaml"
+            self.m.dump_yaml(config, self.sample())
+            self.write_auth(home)
+            kwargs = {
+                "prune_retired": True,
+                "supported_slots": set(self.policy["auxiliary"]["slots"]),
+                "supported_reasoning_slots": set(self.policy["auxiliary"]["slots"]),
+            }
+            before_hash = self.m.sha256_file(config)
+            report = self.m.process_config(
+                home, self.policy, apply=False, dry_run=False,
+                expected_hash=None, **kwargs,
+            )
+            self.assertEqual(report["status"], "drift")
+            dry_run = self.m.process_config(
+                home, self.policy, apply=True, dry_run=True,
+                expected_hash=report["audited_hash"], **kwargs,
+            )
+            self.assertFalse(dry_run["applied"])
+            self.assertIsNone(dry_run["backup_path"])
+            self.assertEqual(self.m.sha256_file(config), before_hash)
+            applied = self.m.process_config(
+                home, self.policy, apply=True, dry_run=False,
+                expected_hash=report["audited_hash"], **kwargs,
+            )
+            self.assertTrue(applied["applied"])
+            clean = self.m.process_config(
+                home, self.policy, apply=False, dry_run=False,
+                expected_hash=None, **kwargs,
+            )
+            self.assertEqual(clean["status"], "clean")
+            persisted = self.m.load_yaml(config)
+            self.assertEqual(persisted["fallback_providers"], [])
+            self.assertNotIn("fallback_model", persisted)
 
     def test_policy_cleanup_uses_remove_keys_and_preset_boundaries(self):
         slots = self.policy["auxiliary"]["slots"]

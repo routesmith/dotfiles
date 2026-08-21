@@ -149,8 +149,8 @@ def load_policy(path: Path) -> dict[str, Any]:
     _validate_route(delegation, "delegation", require_fallback=False)
     _validate_reasoning_effort(delegation.get("reasoning_effort"), "delegation")
     fallbacks = policy["fallback_providers"]
-    if not isinstance(fallbacks, list) or not fallbacks:
-        raise ValueError("fallback_providers must be a non-empty list")
+    if not isinstance(fallbacks, list):
+        raise ValueError("fallback_providers must be a list")
     for index, entry in enumerate(fallbacks):
         _validate_route(entry, f"fallback_providers[{index}]", require_fallback=False)
     for key in ("retired_providers", "retired_secret_env"):
